@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Funding Rate Arbitrage Backtest Results</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3/build/global/luxon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
+    <style>
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-secondary: #111827;
+            --bg-card: #1f2937;
+            --border-color: #374151;
+            --text-primary: #f9fafb;
+            --text-secondary: #9ca3af;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-blue: #3b82f6;
+            --accent-yellow: #f59e0b;
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+        
+        .dashboard { max-width: 1600px; margin: 0 auto; padding: 24px; }
+        
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        header h1 { font-size: 24px; font-weight: 600; }
+        
+        .data-source {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--accent-green);
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        
+        .grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-bottom: 24px; }
+        
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid var(--border-color);
+        }
+        
+        .card-title {
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+        
+        .card-value {
+            font-size: 28px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+        
+        .positive { color: var(--accent-green); }
+        .negative { color: var(--accent-red); }
+        
+        .card-subtitle { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+        
+        .chart-container {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid var(--border-color);
+            margin-bottom: 24px;
+        }
+        
+        .chart-title { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
+        
+        .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
+        
+        .metrics-table { width: 100%; border-collapse: collapse; }
+        
+        .metrics-table th, .metrics-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .metrics-table th {
+            color: var(--text-secondary);
+            font-weight: 500;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        
+        .trades-table { width: 100%; font-size: 13px; }
+        .trades-table th, .trades-table td { padding: 10px; text-align: left; border-bottom: 1px solid var(--border-color); }
+        .trades-table th { color: var(--text-secondary); font-size: 11px; text-transform: uppercase; }
+        
+        .badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+        .badge.good { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); }
+        .badge.warning { background: rgba(245, 158, 11, 0.2); color: var(--accent-yellow); }
+        .badge.danger { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); }
+        
+        .file-input {
+            margin-bottom: 24px;
+            padding: 20px;
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 2px dashed var(--border-color);
+            text-align: center;
+        }
+        
+        .file-input input { display: none; }
+        
+        .file-input label {
+            cursor: pointer;
+            padding: 12px 24px;
+            background: var(--accent-blue);
+            color: white;
+            border-radius: 8px;
+            font-weight: 500;
+        }
+        
+        .file-input label:hover { background: #2563eb; }
+        
+        .info-text { color: var(--text-secondary); margin-top: 12px; font-size: 14px; }
+        
+        footer {
+            text-align: center;
+            padding: 24px;
+            color: var(--text-secondary);
+            font-size: 13px;
+            border-top: 1px solid var(--border-color);
+        }
+        
+        #results { display: none; }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <header>
+            <h1>📊 Funding Rate Arbitrage Backtest</h1>
+            <div class="data-source" id="dataSource">REAL Exchange Data</div>
+        </header>
+        
+        <div class="file-input" id="fileInput">
+            <input type="file" id="jsonFile" accept=".json">
+            <label for="jsonFile">Load Backtest Results (JSON)</label>
+            <p class="info-text">
+                Generate results: <code>./build/backtest_to_json BTCUSDT 1.0</code><br>
+                Then load <code>backtest_results.json</code>
+            </p>
+        </div>
+        
+        <div id="results">
+            <!-- Summary Cards -->
+            <div class="grid">
+                <div class="card">
+                    <div class="card-title">Symbol</div>
+                    <div class="card-value" id="symbol">-</div>
+                    <div class="card-subtitle" id="threshold">Min diff: - bps</div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Total P&L</div>
+                    <div class="card-value" id="totalPnl">$0</div>
+                    <div class="card-subtitle" id="returnPct">0% return</div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Trades</div>
+                    <div class="card-value" id="totalTrades">0</div>
+                    <div class="card-subtitle" id="winRate">0% win rate</div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Max Drawdown</div>
+                    <div class="card-value negative" id="maxDrawdown">0%</div>
+                    <div class="card-subtitle">Peak to trough</div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Daily Sharpe</div>
+                    <div class="card-value" id="sharpe">0.00</div>
+                    <div class="card-subtitle">NOT annualized</div>
+                </div>
+            </div>
+            
+            <!-- Equity Chart -->
+            <div class="chart-container">
+                <h2 class="chart-title">Equity Curve</h2>
+                <canvas id="equityChart" height="80"></canvas>
+            </div>
+            
+            <!-- Drawdown Chart -->
+            <div class="chart-container">
+                <h2 class="chart-title">Drawdown</h2>
+                <canvas id="drawdownChart" height="60"></canvas>
+            </div>
+            
+            <div class="two-col">
+                <!-- Risk Metrics -->
+                <div class="card">
+                    <h3 class="chart-title">Risk Metrics (Daily, NOT Annualized)</h3>
+                    <table class="metrics-table">
+                        <tbody>
+                            <tr>
+                                <td>Daily Sharpe Ratio</td>
+                                <td id="dailySharpe">0.00</td>
+                                <td><span class="badge" id="sharpeBadge">-</span></td>
+                            </tr>
+                            <tr>
+                                <td>Daily Sortino Ratio</td>
+                                <td id="dailySortino">0.00</td>
+                                <td><span class="badge" id="sortinoBadge">-</span></td>
+                            </tr>
+                            <tr>
+                                <td>Daily Volatility</td>
+                                <td id="dailyVol">0.00%</td>
+                                <td><span class="badge" id="volBadge">-</span></td>
+                            </tr>
+                            <tr>
+                                <td>Total Fees Paid</td>
+                                <td id="totalFees">$0</td>
+                                <td>-</td>
+                            </tr>
+                            <tr>
+                                <td>Avg Trade P&L</td>
+                                <td id="avgTrade">$0</td>
+                                <td>-</td>
+                            </tr>
+                            <tr>
+                                <td>Funding Periods</td>
+                                <td id="periods">0</td>
+                                <td>-</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Trade Stats -->
+                <div class="card">
+                    <h3 class="chart-title">Trade Statistics</h3>
+                    <table class="metrics-table">
+                        <tbody>
+                            <tr>
+                                <td>Total Trades</td>
+                                <td id="tradesTotal">0</td>
+                            </tr>
+                            <tr>
+                                <td>Winning Trades</td>
+                                <td id="tradesWin" class="positive">0</td>
+                            </tr>
+                            <tr>
+                                <td>Losing Trades</td>
+                                <td id="tradesLose" class="negative">0</td>
+                            </tr>
+                            <tr>
+                                <td>Win Rate</td>
+                                <td id="winRatePct">0%</td>
+                            </tr>
+                            <tr>
+                                <td>Initial Capital</td>
+                                <td id="initialCap">$0</td>
+                            </tr>
+                            <tr>
+                                <td>Final Equity</td>
+                                <td id="finalEquity">$0</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Trades Table -->
+            <div class="chart-container">
+                <h3 class="chart-title">All Trades</h3>
+                <div style="max-height: 400px; overflow-y: auto;">
+                    <table class="trades-table" id="tradesTable">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Long Exchange</th>
+                                <th>Short Exchange</th>
+                                <th>Long Rate</th>
+                                <th>Short Rate</th>
+                                <th>Diff (bps)</th>
+                                <th>Funding P&L</th>
+                                <th>Fees</th>
+                                <th>Net P&L</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <footer>
+            Funding Rate Arbitrage Backtest | REAL Historical Data from Binance, Bybit, OKX | Static Results (No Simulation)
+        </footer>
+    </div>
+    
+    <script>
+        let equityChart = null;
+        let drawdownChart = null;
+        
+        function initCharts() {
+            const eqCtx = document.getElementById('equityChart').getContext('2d');
+            equityChart = new Chart(eqCtx, {
+                type: 'line',
+                data: { labels: [], datasets: [{ label: 'Equity', data: [], borderColor: '#10b981', backgroundColor: 'rgba(16, 185, 129, 0.1)', fill: true, tension: 0.2, pointRadius: 0 }] },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { type: 'time', time: { unit: 'day' }, grid: { color: 'rgba(55, 65, 81, 0.5)' }, ticks: { color: '#9ca3af' } },
+                        y: { grid: { color: 'rgba(55, 65, 81, 0.5)' }, ticks: { color: '#9ca3af', callback: v => '$' + v.toLocaleString() } }
+                    }
+                }
+            });
+            
+            const ddCtx = document.getElementById('drawdownChart').getContext('2d');
+            drawdownChart = new Chart(ddCtx, {
+                type: 'line',
+                data: { labels: [], datasets: [{ label: 'Drawdown', data: [], borderColor: '#ef4444', backgroundColor: 'rgba(239, 68, 68, 0.3)', fill: true, tension: 0.2, pointRadius: 0 }] },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { type: 'time', time: { unit: 'day' }, grid: { color: 'rgba(55, 65, 81, 0.5)' }, ticks: { color: '#9ca3af' } },
+                        y: { reverse: true, grid: { color: 'rgba(55, 65, 81, 0.5)' }, ticks: { color: '#9ca3af', callback: v => (v * 100).toFixed(1) + '%' } }
+                    }
+                }
+            });
+        }
+        
+        function setBadge(id, value, thresholds, inverse) {
+            const elem = document.getElementById(id);
+            let cls = 'danger';
+            if (inverse) {
+                if (value < thresholds[0]) cls = 'good';
+                else if (value < thresholds[1]) cls = 'warning';
+            } else {
+                if (value > thresholds[1]) cls = 'good';
+                else if (value > thresholds[0]) cls = 'warning';
+            }
+            elem.className = 'badge ' + cls;
+            elem.textContent = cls === 'good' ? 'Good' : (cls === 'warning' ? 'OK' : 'Poor');
+        }
+        
+        function loadResults(data) {
+            document.getElementById('fileInput').style.display = 'none';
+            document.getElementById('results').style.display = 'block';
+            document.getElementById('dataSource').textContent = data.data_source || 'REAL Exchange Data';
+            
+            const s = data.summary;
+            
+            // Summary cards
+            document.getElementById('symbol').textContent = data.symbol;
+            document.getElementById('threshold').textContent = 'Min diff: ' + data.min_diff_bps + ' bps';
+            
+            const pnlElem = document.getElementById('totalPnl');
+            pnlElem.textContent = '$' + s.total_pnl.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            pnlElem.className = 'card-value ' + (s.total_pnl >= 0 ? 'positive' : 'negative');
+            document.getElementById('returnPct').textContent = s.net_return_pct.toFixed(2) + '% return';
+            
+            document.getElementById('totalTrades').textContent = s.total_trades;
+            document.getElementById('winRate').textContent = (s.win_rate * 100).toFixed(1) + '% win rate';
+            
+            document.getElementById('maxDrawdown').textContent = s.max_drawdown_pct.toFixed(2) + '%';
+            document.getElementById('sharpe').textContent = s.daily_sharpe.toFixed(3);
+            
+            // Risk metrics
+            document.getElementById('dailySharpe').textContent = s.daily_sharpe.toFixed(3);
+            setBadge('sharpeBadge', s.daily_sharpe, [0.3, 0.8], false);
+            
+            document.getElementById('dailySortino').textContent = s.daily_sortino.toFixed(3);
+            setBadge('sortinoBadge', s.daily_sortino, [0.4, 1.0], false);
+            
+            document.getElementById('dailyVol').textContent = (s.daily_volatility * 100).toFixed(3) + '%';
+            setBadge('volBadge', s.daily_volatility, [0.02, 0.05], true);
+            
+            document.getElementById('totalFees').textContent = '$' + s.total_fees.toLocaleString(undefined, {minimumFractionDigits: 2});
+            document.getElementById('avgTrade').textContent = '$' + s.avg_trade_pnl.toFixed(2);
+            document.getElementById('periods').textContent = s.total_periods;
+            
+            // Trade stats
+            document.getElementById('tradesTotal').textContent = s.total_trades;
+            document.getElementById('tradesWin').textContent = s.winning_trades;
+            document.getElementById('tradesLose').textContent = s.losing_trades;
+            document.getElementById('winRatePct').textContent = (s.win_rate * 100).toFixed(1) + '%';
+            document.getElementById('initialCap').textContent = '$' + s.initial_equity.toLocaleString();
+            document.getElementById('finalEquity').textContent = '$' + s.final_equity.toLocaleString(undefined, {minimumFractionDigits: 2});
+            
+            // Charts
+            if (!equityChart) initCharts();
+            
+            const labels = data.equity_curve.map(p => new Date(p.timestamp_ms));
+            const equity = data.equity_curve.map(p => p.equity);
+            const drawdown = data.equity_curve.map(p => p.drawdown);
+            
+            equityChart.data.labels = labels;
+            equityChart.data.datasets[0].data = equity;
+            equityChart.update();
+            
+            drawdownChart.data.labels = labels;
+            drawdownChart.data.datasets[0].data = drawdown;
+            drawdownChart.update();
+            
+            // Trades table
+            const tbody = document.querySelector('#tradesTable tbody');
+            tbody.innerHTML = '';
+            
+            data.trades.forEach(t => {
+                const row = document.createElement('tr');
+                const date = new Date(t.timestamp_ms).toISOString().split('T')[0];
+                const pnlClass = t.net_pnl >= 0 ? 'positive' : 'negative';
+                
+                row.innerHTML = `
+                    <td>${date}</td>
+                    <td>${t.long_exchange}</td>
+                    <td>${t.short_exchange}</td>
+                    <td>${t.long_rate.toFixed(4)}%</td>
+                    <td>${t.short_rate.toFixed(4)}%</td>
+                    <td>${t.diff_bps.toFixed(2)}</td>
+                    <td>$${t.funding_pnl.toFixed(2)}</td>
+                    <td>$${t.fees.toFixed(2)}</td>
+                    <td class="${pnlClass}">$${t.net_pnl.toFixed(2)}</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+        
+        // File input handler
+        document.getElementById('jsonFile').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        loadResults(data);
+                    } catch (err) {
+                        alert('Error parsing JSON: ' + err.message);
+                    }
+                };
+                reader.readAsText(file);
+            }
+        });
+        
+        // Also try to load default file on page load
+        window.onload = function() {
+            fetch('../backtest_results.json')
+                .then(r => r.json())
+                .then(data => loadResults(data))
+                .catch(() => {
+                    // Try alternate path
+                    fetch('backtest_results.json')
+                        .then(r => r.json())
+                        .then(data => loadResults(data))
+                        .catch(() => {});
+                });
+        };
+    </script>
+</body>
+</html>

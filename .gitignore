@@ -1,0 +1,44 @@
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+*.out
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# System files
+.DS_Store
+.AppleDouble
+.LSOverride
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.sublime-workspace
+
+# Test outputs
+test_output.json
+backtest_results*.csv
+backtest_results*.json
+backtest_ethusdt.json
+
+# Logs
+*.log
+
+# Dependencies
+node_modules/
+venv/
+env/
+
+# Nested git repositories (if any)
+HFT_Full_Pipeline/

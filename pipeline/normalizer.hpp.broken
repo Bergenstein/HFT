@@ -1,0 +1,470 @@
+// pipeline/normalizer.hpp
+#pragma once
+#include "normalized_data.hpp"
+#include <nlohmann/json.hpp>
+#include <map>
+#include <functional>
+
+namespace pipeline {
+
+using json = nlohmann::json;
+
+class MultiExchangeNormalizer {
+public:
+    // Normalize Coinbase data
+    static NormalizedQuote normalize_coinbase(const json& msg) {
+        NormalizedQuote quote;
+        quote.exchange = "coinbase";
+        
+        if (msg.contains("product_id")) {
+            quote.product_id = normalize_product_id(msg["product_id"]);
+            auto parts = split_product(quote.product_id);
+            quote.base = parts.first;
+            quote.quote = parts.second;
+        }
+        
+        if (msg.contains("bids") && !msg["bids"].empty()) {
+            auto& bid = msg["bids"][0];
+            quote.best_bid = std::stod(bid[0].get<std::string>());
+            quote.bid_size = std::stod(bid[1].get<std::string>());
+            
+            // Store top 5 levels
+            for (size_t i = 0; i < std::min(size_t(5), msg["bids"].size()); ++i) {
+                quote.bids.push_back({
+                    std::stod(msg["bids"][i][0].get<std::string>()),
+                    std::stod(msg["bids"][i][1].get<std::string>())
+                });
+            }
+        }
+        
+        if (msg.contains("asks") && !msg["asks"].empty()) {
+            auto& ask = msg["asks"][0];
+            quote.best_ask = std::stod(ask[0].get<std::string>());
+            quote.ask_size = std::stod(ask[1].get<std::string>());
+            
+            for (size_t i = 0; i < std::min(size_t(5), msg["asks"].size()); ++i) {
+                quote.asks.push_back({
+                    std::stod(msg["asks"][i][0].get<std::string>()),
+                    std::stod(msg["asks"][i][1].get<std::string>())
+                });
+            }
+        }
+        
+        if (msg.contains("time")) {
+            // Parse ISO 8601 timestamp - simplified
+            quote.exchange_timestamp = std::chrono::system_clock::now();
+        }
+        
+        quote.local_timestamp = std::chrono::system_clock::now();
+        quote.sequence = msg.value("sequence", 0);
+        
+        return quote;
+    }
+    
+    // Normalize Binance data
+    static NormalizedQuote normalize_binance(const json& msg, const std::string& symbol) {
+        NormalizedQuote quote;
+        quote.exchange = "binance";
+        quote.product_id = binance_to_normalized(symbol);
+        
+        auto parts = split_product(quote.product_id);
+        quote.base = parts.first;
+        quote.quote = parts.second;
+        
+        if (msg.contains("b") && !msg["b"].empty()) {
+            quote.best_bid = std::stod(msg["b"][0][0].get<std::string>());
+            quote.bid_size = std::stod(msg["b"][0][1].get<std::string>());
+            
+            for (size_t i = 0; i < std::min(size_t(5), msg["b"].size()); ++i) {
+                quote.bids.push_back({
+                    std::stod(msg["b"][i][0].get<std::string>()),
+                    std::stod(msg["b"][i][1].get<std::string>())
+                });
+            }
+        }
+        
+        if (msg.contains("a") && !msg["a"].empty()) {
+            quote.best_ask = std::stod(msg["a"][0][0].get<std::string>());
+            quote.ask_size = std::stod(msg["a"][0][1].get<std::string>());
+            
+            for (size_t i = 0; i < std::min(size_t(5), msg["a"].size()); ++i) {
+                quote.asks.push_back({
+                    std::stod(msg["a"][i][0].get<std::string>()),
+                    std::stod(msg["a"][i][1].get<std::string>())
+                });
+            }
+        }
+        
+        quote.exchange_timestamp = std::chrono::system_clock::now();
+        quote.local_timestamp = std::chrono::system_clock::now();
+        quote.sequence = msg.value("u", 0);
+        
+        return quote;
+    }
+    
+    // Normalize Kraken data
+    static NormalizedQuote normalize_kraken(const json& msg, const std::string& symbol) {
+        NormalizedQuote quote;
+        quote.exchange = "kraken";
+        quote.product_id = kraken_to_normalized(symbol);
+        
+        auto parts = split_product(quote.product_id);
+        quote.base = parts.first;
+        quote.quote = parts.second;
+        
+        // Kraken uses "b" and "a" or "bs" and "as"
+        auto bids = msg.contains("bs") ? msg["bs"] : (msg.contains("b") ? msg["b"] : json::array());
+        auto asks = msg.contains("as") ? msg["as"] : (msg.contains("a") ? msg["a"] : json::array());
+        
+        if (!bids.empty()) {
+            quote.best_bid = std::stod(bids[0][0].get<std::string>());
+            quote.bid_size = std::stod(bids[0][1].get<std::string>());
+            
+            for (size_t i = 0; i < std::min(size_t(5), bids.size()); ++i) {
+                quote.bids.push_back({
+                    std::stod(bids[i][0].get<std::string>()),
+                    std::stod(bids[i][1].get<std::string>())
+                });
+            }
+        }
+        
+        if (!asks.empty()) {
+            quote.best_ask = std::stod(asks[0][0].get<std::string>());
+            quote.ask_size = std::stod(asks[0][1].get<std::string>());
+            
+            for (size_t i = 0; i < std::min(size_t(5), asks.size()); ++i) {
+                quote.asks.push_back({
+                    std::stod(asks[i][0].get<std::string>()),
+                    std::stod(asks[i][1].get<std::string>())
+                });
+            }
+        }
+        
+        quote.exchange_timestamp = std::chrono::system_clock::now();
+        quote.local_timestamp = std::chrono::system_clock::now();
+        quote.sequence = 0;
+        
+        return quote;
+    }
+
+private:
+    static std::string normalize_product_id(const std::string& product) {
+        // Already normalized format: BTC-USD, ETH-USDT
+        return product;
+    }
+    
+    static std::string binance_to_normalized(const std::string& symbol) {
+        // BTCUSDT -> BTC-USDT
+        std::string upper = symbol;
+        std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+        
+        if (upper.find("USDT") != std::string::npos) {
+            size_t pos = upper.find("USDT");
+            return upper.substr(0, pos) + "-USDT";
+        } else if (upper.find("USD") != std::string::npos) {
+            size_t pos = upper.find("USD");
+    
+    // Normalize OKX data
+    static NormalizedQuote normalize_okx(const json& msg, const std::string& symbol) {
+        NormalizedQuote quote;
+        quote.exchange = "okx";
+        quote.product_id = okx_to_normalized(symbol);
+        auto parts = split_product(quote.product_id);
+        quote.base = parts.first;
+        quote.quote = parts.second;
+        if (msg.contains("bids") && !msg["bids"].empty()) {
+            quote.best_bid = std::stod(msg["bids"][0][0].get<std::string>());
+            quote.bid_size = std::stod(msg["bids"][0][1].get<std::string>());
+            for (size_t i = 0; i < std::min(size_t(5), msg["bids"].size()); ++i) {
+                quote.bids.push_back({std::stod(msg["bids"][i][0].get<std::string>()), std::stod(msg["bids"][i][1].get<std::string>())});
+            }
+        }
+        if (msg.contains("asks") && !msg["asks"].empty()) {
+            quote.best_ask = std::stod(msg["asks"][0][0].get<std::string>());
+            quote.ask_size = std::stod(msg["asks"][0][1].get<std::string>());
+            for (size_t i = 0; i < std::min(size_t(5), msg["asks"].size()); ++i) {
+                quote.asks.push_back({std::stod(msg["asks"][i][0].get<std::string>()), std::stod(msg["asks"][i][1].get<std::string>())});
+            }
+        }
+        quote.exchange_timestamp = std::chrono::system_clock::now();
+        quote.local_timestamp = std::chrono::system_clock::now();
+        quote.sequence = msg.value("seqId", 0);
+        return quote;
+    }
+    
+    // Normalize Bybit data
+    static NormalizedQuote normalize_bybit(const json& msg, const std::string& symbol) {
+        NormalizedQuote quote;
+        quote.exchange = "bybit";
+        quote.product_id = bybit_to_normalized(symbol);
+        auto parts = split_product(quote.product_id);
+        quote.base = parts.first;
+        quote.quote = parts.second;
+        if (msg.contains("b") && !msg["b"].empty()) {
+            quote.best_bid = std::stod(msg["b"][0][0].get<std::string>());
+            quote.bid_size = std::stod(msg["b"][0][1].get<std::string>());
+            for (size_t i = 0; i < std::min(size_t(5), msg["b"].size()); ++i) {
+                quote.bids.push_back({std::stod(msg["b"][i][0].get<std::string>()), std::stod(msg["b"][i][1].get<std::string>())});
+            }
+        }
+        if (msg.contains("a") && !msg["a"].empty()) {
+            quote.best_ask = std::stod(msg["a"][0][0].get<std::string>());
+            quote.ask_size = std::stod(msg["a"][0][1].get<std::string>());
+            for (size_t i = 0; i < std::min(size_t(5), msg["a"].size()); ++i) {
+                quote.asks.push_back({std::stod(msg["a"][i][0].get<std::string>()), std::stod(msg["a"][i][1].get<std::string>())});
+            }
+        }
+        quote.exchange_timestamp = std::chrono::system_clock::now();
+        quote.local_timestamp = std::chrono::system_clock::now();
+        quote.sequence = msg.value("u", 0);
+        return quote;
+    }
+
+private:
+    static std::string normalize_product_id(const std::string& product) { return product; }
+    
+    static std::string binance_to_normalized(const std::string& symbol) {
+        std::string upper = symbol;
+        std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+        if (upper.find("USDT") != std::string::npos) return upper.substr(0, upper.find("USDT")) + "-USDT";
+        else if (upper.find("USD") != std::string::npos) return upper.substr(0, upper.find("USD")) + "-USD";
+        else if (upper.find("BTC") != std::string::npos) return upper.substr(0, upper.find("BTC")) + "-BTC";
+        return upper;
+    }
+    
+    static std::string kraken_to_normalized(const std::string& symbol) {
+        std::string normalized = symbol;
+        std::replace(normalized.begin(), normalized.end(), '/', '-');
+        if (normalized.find("XBT") == 0) normalized = "BTC" + normalized.substr(3);
+        return normalized;
+    }
+    
+    static std::string okx_to_normalized(const std::string& symbol) { return symbol; }
+    
+    static std::string bybit_to_normalized(const std::string& symbol) {
+        std::string upper = symbol;
+        std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+        if (upper.find("USDT") != std::string::npos) return upper.substr(0, upper.find("USDT")) + "-USDT";
+        return upper;
+    }
+    
+    static std::pair<std::string, std::string> split_product(const std::string& product) {
+        size_t pos = product.find('-');
+        if (pos == std::string::npos) return {product, ""};
+        return {product.substr(0, pos), product.substr(pos + 1)};
+    }
+};
+
+} // namespace pipeline
+
+    // Normalize OKX data
+    static NormalizedQuote normalize_okx(const json& msg, const std::string& symbol) {
+        NormalizedQuote quote;
+        quote.exchange = "okx";
+        quote.product_id = okx_to_normalized(symbol);
+        
+        auto parts = split_product(quote.product_id);
+        quote.base = parts.first;
+        quote.quote = parts.second;
+        
+        // OKX uses "bids" and "asks" arrays
+        if (msg.contains("bids") && msg["bids"].is_array() && !msg["bids"].empty()) {
+            quote.best_bid = std::stod(msg["bids"][0][0].get<std::string>());
+            quote.bid_size = std::stod(msg["bids"][0][1].get<std::string>());
+            
+            for (size_t i = 0; i < std::min(size_t(5), msg["bids"].size()); ++i) {
+                quote.bids.push_back({
+                    std::stod(msg["bids"][i][0].get<std::string>()),
+                    std::stod(msg["bids"][i][1].get<std::string>())
+                });
+            }
+        }
+        
+        if (msg.contains("asks") && msg["asks"].is_array() && !msg["asks"].empty()) {
+            quote.best_ask = std::stod(msg["asks"][0][0].get<std::string>());
+            quote.ask_size = std::stod(msg["asks"][0][1].get<std::string>());
+            
+            for (size_t i = 0; i < std::min(size_t(5), msg["asks"].size()); ++i) {
+                quote.asks.push_back({
+                    std::stod(msg["asks"][i][0].get<std::string>()),
+                    std::stod(msg["asks"][i][1].get<std::string>())
+                });
+            }
+        }
+        
+        quote.exchange_timestamp = std::chrono::system_clock::now();
+        quote.local_timestamp = std::chrono::system_clock::now();
+        quote.sequence = 0;
+        
+        return quote;
+    }
+
+    // Normalize Bybit data
+    static NormalizedQuote normalize_bybit(const json& msg, const std::string& symbol) {
+        NormalizedQuote quote;
+        quote.exchange = "bybit";
+        quote.product_id = bybit_to_normalized(symbol);
+        
+        auto parts = split_product(quote.product_id);
+        quote.base = parts.first;
+        quote.quote = parts.second;
+        
+        // Bybit uses "b" and "a" for bids/asks
+        if (msg.contains("b") && msg["b"].is_array() && !msg["b"].empty()) {
+            quote.best_bid = std::stod(msg["b"][0][0].get<std::string>());
+            quote.bid_size = std::stod(msg["b"][0][1].get<std::string>());
+            
+            for (size_t i = 0; i < std::min(size_t(5), msg["b"].size()); ++i) {
+                quote.bids.push_back({
+                    std::stod(msg["b"][i][0].get<std::string>()),
+                    std::stod(msg["b"][i][1].get<std::string>())
+                });
+            }
+        }
+        
+        if (msg.contains("a") && msg["a"].is_array() && !msg["a"].empty()) {
+            quote.best_ask = std::stod(msg["a"][0][0].get<std::string>());
+            quote.ask_size = std::stod(msg["a"][0][1].get<std::string>());
+            
+            for (size_t i = 0; i < std::min(size_t(5), msg["a"].size()); ++i) {
+                quote.asks.push_back({
+                    std::stod(msg["a"][i][0].get<std::string>()),
+                    std::stod(msg["a"][i][1].get<std::string>())
+                });
+            }
+        }
+        
+        quote.exchange_timestamp = std::chrono::system_clock::now();
+        quote.local_timestamp = std::chrono::system_clock::now();
+        quote.sequence = 0;
+        
+        return quote;
+    }
+
+private:
+    static std::string okx_to_normalized(const std::string& symbol) {
+        // BTC-USDT -> BTC-USDT (already normalized)
+        return symbol;
+    }
+    
+    static std::string bybit_to_normalized(const std::string& symbol) {
+        // BTCUSDT -> BTC-USDT
+        std::string upper = symbol;
+        std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+        
+        if (upper.find("USDT") != std::string::npos) {
+            size_t pos = upper.find("USDT");
+            return upper.substr(0, pos) + "-USDT";
+        } else if (upper.find("USD") != std::string::npos) {
+            size_t pos = upper.find("USD");
+            return upper.substr(0, pos) + "-USD";
+        }
+        return upper;
+    }
+
+    
+    // Normalize OKX data
+    static NormalizedQuote normalize_okx(const json& msg, const std::string& symbol) {
+        NormalizedQuote quote;
+        quote.exchange = "okx";
+        quote.product_id = okx_to_normalized(symbol);
+        
+        auto parts = split_product(quote.product_id);
+        quote.base = parts.first;
+        quote.quote = parts.second;
+        
+        if (msg.contains("bids") && !msg["bids"].empty()) {
+            quote.best_bid = std::stod(msg["bids"][0][0].get<std::string>());
+            quote.bid_size = std::stod(msg["bids"][0][1].get<std::string>());
+            
+            for (size_t i = 0; i < std::min(size_t(5), msg["bids"].size()); ++i) {
+                quote.bids.push_back({
+                    std::stod(msg["bids"][i][0].get<std::string>()),
+                    std::stod(msg["bids"][i][1].get<std::string>())
+                });
+            }
+        }
+        
+        if (msg.contains("asks") && !msg["asks"].empty()) {
+            quote.best_ask = std::stod(msg["asks"][0][0].get<std::string>());
+            quote.ask_size = std::stod(msg["asks"][0][1].get<std::string>());
+            
+            for (size_t i = 0; i < std::min(size_t(5), msg["asks"].size()); ++i) {
+                quote.asks.push_back({
+                    std::stod(msg["asks"][i][0].get<std::string>()),
+                    std::stod(msg["asks"][i][1].get<std::string>())
+                });
+            }
+        }
+        
+        quote.exchange_timestamp = std::chrono::system_clock::now();
+        quote.local_timestamp = std::chrono::system_clock::now();
+        quote.sequence = 0;
+        
+        return quote;
+    }
+    
+    // Normalize Bybit data
+    static NormalizedQuote normalize_bybit(const json& msg, const std::string& symbol) {
+        NormalizedQuote quote;
+        quote.exchange = "bybit";
+        quote.product_id = bybit_to_normalized(symbol);
+        
+        auto parts = split_product(quote.product_id);
+        quote.base = parts.first;
+        quote.quote = parts.second;
+        
+        if (msg.contains("b") && !msg["b"].empty()) {
+            quote.best_bid = std::stod(msg["b"][0][0].get<std::string>());
+            quote.bid_size = std::stod(msg["b"][0][1].get<std::string>());
+            
+            for (size_t i = 0; i < std::min(size_t(5), msg["b"].size()); ++i) {
+                quote.bids.push_back({
+                    std::stod(msg["b"][i][0].get<std::string>()),
+                    std::stod(msg["b"][i][1].get<std::string>())
+                });
+            }
+        }
+        
+        if (msg.contains("a") && !msg["a"].empty()) {
+            quote.best_ask = std::stod(msg["a"][0][0].get<std::string>());
+            quote.ask_size = std::stod(msg["a"][0][1].get<std::string>());
+            
+            for (size_t i = 0; i < std::min(size_t(5), msg["a"].size()); ++i) {
+                quote.asks.push_back({
+                    std::stod(msg["a"][i][0].get<std::string>()),
+                    std::stod(msg["a"][i][1].get<std::string>())
+                });
+            }
+        }
+        
+        quote.exchange_timestamp = std::chrono::system_clock::now();
+        quote.local_timestamp = std::chrono::system_clock::now();
+        quote.sequence = 0;
+        
+        return quote;
+    }
+
+private:
+    static std::string okx_to_normalized(const std::string& symbol) {
+        // BTC-USDT -> BTC-USDT (already normalized)
+        return symbol;
+    }
+    
+    static std::string bybit_to_normalized(const std::string& symbol) {
+        // BTCUSDT -> BTC-USDT
+        std::string upper = symbol;
+        std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+        
+        if (upper.find("USDT") != std::string::npos) {
+            size_t pos = upper.find("USDT");
+            return upper.substr(0, pos) + "-USDT";
+        } else if (upper.find("USD") != std::string::npos) {
+            size_t pos = upper.find("USD");
+            return upper.substr(0, pos) + "-USD";
+        }
+        return symbol;
+    }
+};
+
+} // namespace pipeline

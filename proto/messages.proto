@@ -1,0 +1,744 @@
+//=============================================================================
+// PROTOCOL BUFFERS MESSAGE DEFINITIONS - Cross-Process Communication Schema
+//=============================================================================
+//
+// 🎯 PURPOSE:
+// This file defines the MESSAGE SCHEMAS (data structures) for communication
+// between different components of the HFT system using Protocol Buffers.
+//
+// 📚 WHAT IS PROTOCOL BUFFERS (PROTOBUF)?
+// - Binary serialization format developed by Google
+// - Like JSON but MUCH faster and smaller
+// - Language-agnostic: same .proto file generates code for C++, Python, Java, etc.
+// - Backward/forward compatible: can add fields without breaking old code
+//
+// 🔄 HOW PROTOBUF WORKS:
+// 1. Define schemas in .proto file (this file)
+// 2. Run protoc compiler: generates messages.pb.h and messages.pb.cc
+// 3. Use generated C++ classes in your code
+// 4. Serialize to bytes, send over network, deserialize on other end
+//
+// 💡 PROTOBUF vs JSON vs RAW STRUCTS:
+// ┌─────────────────┬────────────┬─────────┬──────────────┬──────────────┐
+// │ Format          │ Size       │ Speed   │ Human-Read   │ Cross-Lang   │
+// ├─────────────────┼────────────┼─────────┼──────────────┼──────────────┤
+// │ Raw C++ struct  │ Smallest   │ Fastest │ No           │ No (C++ only)│
+// │ Protobuf        │ Small      │ Fast    │ No (binary)  │ Yes          │
+// │ JSON            │ Large      │ Slow    │ Yes          │ Yes          │
+// └─────────────────┴────────────┴─────────┴──────────────┴──────────────┘
+//
+// EXAMPLE SIZE COMPARISON (OrderBookSnapshot with 100 levels):
+// - Raw struct (memcpy): ~3.2 KB
+// - Protobuf: ~4.5 KB (40% larger than raw, but safe)
+// - JSON: ~12 KB (270% larger than protobuf!)
+//
+// EXAMPLE SPEED COMPARISON:
+// - Raw struct memcpy: ~50 ns
+// - Protobuf serialize: ~1-5 μs (100x slower than raw, but still fast)
+// - JSON serialize: ~50-100 μs (1000x slower than raw)
+//
+// 🏗️ ARCHITECTURE:
+// This .proto file is used by:
+// 1. zmq/market_data_server.hpp - Serializes messages to send over ZeroMQ
+// 2. zmq/market_data_client.hpp - Deserializes received messages
+// 3. zmq/strategy_subscriber.hpp - Deserializes messages in strategies
+// 4. Any Python/Java/Go clients connecting to the system
+//
+// 🔗 CONNECTION TO ZeroMQ:
+// - ZeroMQ (zmq/) = TRANSPORT (how to send bytes over network)
+// - Protobuf (proto/) = SERIALIZATION (how to convert objects to bytes)
+// - They work together: ZMQ sends Protobuf-serialized messages
+//
+// MESSAGE FLOW EXAMPLE:
+// ┌──────────────┐   Protobuf    ┌─────┐   ZeroMQ    ┌──────────────┐
+// │ C++ Object   │ ──Serialize──>│Bytes│ ──Send───>  │ Network      │
+// │ OrderBook    │               │     │             │              │
+// │ Snapshot     │ <─Deserialize─│Bytes│ <─Receive── │ Client       │
+// └──────────────┘               └─────┘             └──────────────┘
+//
+// 🎓 SYNTAX NOTES:
+// - syntax = "proto3": Latest version of Protobuf (simpler than proto2)
+// - package hft: Namespace (C++ generates namespace hft::)
+// - message: Like a C++ struct/class
+// - repeated: Like std::vector<> in C++
+// - oneof: Like a union (only one field set at a time)
+// - enum: Like C++ enum
+// - Field numbers (= 1, = 2): Used for serialization (don't change!)
+//
+// ⚠️ FIELD NUMBER RULES:
+// - NEVER reuse field numbers (breaks backward compatibility)
+// - NEVER change field numbers (breaks all existing data)
+// - CAN add new fields (backward compatible)
+// - CAN remove deprecated fields (mark with reserved)
+//
+// 📊 PERFORMANCE IN HFT:
+// - Protobuf serialization: ~1-5 μs per message
+// - Network latency: ~50-100 μs (localhost TCP)
+// - Total overhead: ~55-105 μs per message
+// - Acceptable for most HFT use cases (strategies update every ~100-1000 μs)
+//
+// 🚀 WHERE THIS IS USED:
+// - run/production_multi_exchange*.cpp: Publishes market data via ZMQ
+// - zmq/market_data_server.hpp: Serializes and sends these messages
+// - zmq/market_data_client.hpp: Receives and deserializes these messages
+// - Python/other language clients: Can subscribe to same feed
+//
+//=============================================================================
+
+syntax = "proto3";
+
+package hft;
+
+//=============================================================================
+// MARKET DATA MESSAGES - Real-Time Orderbook and Trade Data
+//=============================================================================
+//
+// These messages represent the flow of market data from exchanges to strategies.
+//
+// MESSAGE HIERARCHY:
+// MarketDataMessage (wrapper)
+//   ├─ OrderBookSnapshot (full orderbook state)
+//   ├─ OrderBookUpdate (incremental changes)
+//   └─ Trade (executed trades)
+//
+// WHY THREE MESSAGE TYPES?
+// 1. Snapshot: Initial state when you first connect (heavy, ~4-5 KB)
+// 2. Update: Incremental changes (light, ~0.5 KB)
+// 3. Trade: Executions for flow analysis (light, ~0.3 KB)
+//
+// BANDWIDTH EXAMPLE:
+// Sending only snapshots: 100 msg/s * 4 KB = 400 KB/s
+// Sending 1 snapshot + 99 updates: 4 KB + 99*0.5 KB = 53.5 KB/s (7.5x savings!)
+//
+// ============================================================================
+
+//=============================================================================
+// PriceLevel: One Price-Quantity Pair in the Orderbook
+//=============================================================================
+// Represents a single level in the orderbook (bid or ask)
+//
+// EXAMPLE:
+// {price: 50000.50, size: 1.5} means:
+// "There are 1.5 BTC available at $50,000.50"
+//
+// USAGE:
+// - Snapshots contain arrays of these (full depth)
+// - Updates contain only changed levels
+//
+// FIELD TYPES:
+// - double: Sufficient precision for crypto prices
+//   Bitcoin: max ~8 decimals (0.00000001 BTC = 1 satoshi)
+//   Prices: ~2 decimals ($50,000.50)
+message PriceLevel {
+    double price = 1;  // Price level (e.g., 50000.50)
+    double price = 1;  // Price level (e.g., 50000.50)
+    double size = 2;   // Quantity available at this price (e.g., 1.5 BTC)
+}
+
+//=============================================================================
+// OrderBookSnapshot: Full Orderbook State
+//=============================================================================
+// Sent when:
+// - Client first subscribes (initial state)
+// - After a gap in sequence numbers (recovery)
+// - Periodically for reconciliation (e.g., every 60 seconds)
+//
+// SIZE ESTIMATE:
+// Assuming 100 bid levels + 100 ask levels:
+// - Each PriceLevel: 2*8 bytes = 16 bytes
+// - 200 levels * 16 bytes = 3.2 KB
+// - Metadata: ~0.5 KB
+// - Total: ~4 KB per snapshot
+//
+// SEQUENCE NUMBER:
+// - Used to detect gaps: if sequence jumps from 100 to 105, we missed 4 updates
+// - Solution: Request a new snapshot to resync
+//
+// ORDERING CONVENTION:
+// - bids: Descending order (highest price first)
+//   Example: [50000, 49999, 49998, ...]
+// - asks: Ascending order (lowest price first)
+//   Example: [50001, 50002, 50003, ...]
+// - This matches exchange conventions and allows O(1) access to best bid/ask
+message OrderBookSnapshot {
+    string product_id = 1;         // Trading pair (e.g., "BTC-USD")
+    int64 timestamp_ns = 2;        // Exchange timestamp in nanoseconds
+    repeated PriceLevel bids = 3;  // Bid side (buyers), descending price
+    repeated PriceLevel asks = 4;  // Ask side (sellers), ascending price
+    int64 sequence = 5;            // Sequence number for gap detection
+}
+
+//=============================================================================
+// OrderBookUpdate: Incremental Changes to Orderbook
+//=============================================================================
+// Sent after initial snapshot to communicate only what changed
+//
+// CHANGE SEMANTICS:
+// - size > 0: Add or update this price level
+// - size = 0: Remove this price level
+//
+// EXAMPLE:
+// bid_changes: [{price: 50000, size: 1.5}, {price: 49999, size: 0}]
+// Means:
+// - Update bid at 50000 to 1.5 BTC
+// - Remove bid at 49999 (no more liquidity there)
+//
+// WHY INCREMENTAL UPDATES?
+// - Bandwidth savings: send 1-5 changes vs 200 levels
+// - Faster processing: only update changed parts of orderbook
+// - Lower latency: smaller messages = faster transmission
+//
+// SEQUENCE NUMBER GAP DETECTION:
+// ```cpp
+// if (update.sequence != last_sequence + 1) {
+//     // Gap detected! Request snapshot to resync
+//     request_snapshot(product_id);
+// }
+// ```
+message OrderBookUpdate {
+    string product_id = 1;                // Trading pair
+    int64 timestamp_ns = 2;               // Exchange timestamp in nanoseconds
+    repeated PriceLevel bid_changes = 3;  // Changed bid levels (size=0 = remove)
+    repeated PriceLevel ask_changes = 4;  // Changed ask levels (size=0 = remove)
+    int64 sequence = 5;                   // Sequence number (increment by 1)
+}
+
+//=============================================================================
+// Trade: Executed Trade Event
+//=============================================================================
+// Sent when a trade executes on the exchange
+//
+// TRADE vs QUOTE:
+// - Quote: Someone places limit order (adds liquidity, passive)
+// - Trade: Someone takes liquidity with market/aggressive limit order
+//
+// SIDE INTERPRETATION:
+// - "buy": Taker bought (aggressive buyer, bullish signal)
+// - "sell": Taker sold (aggressive seller, bearish signal)
+//
+// USAGE:
+// - VWAP calculation: volume-weighted average of trades
+// - Flow analysis: buying pressure vs selling pressure
+// - Tick charts: each trade is a new tick
+// - Volume profile: distribution of volume at each price
+//
+// EXAMPLE:
+// {product_id: "BTC-USD", price: 50000.50, size: 0.5, side: "buy"}
+// Means: Someone bought 0.5 BTC at $50,000.50 (aggressive buyer)
+message Trade {
+    string product_id = 1;  // Trading pair
+    int64 timestamp_ns = 2;  // Exchange timestamp in nanoseconds
+    double price = 3;        // Execution price
+    double size = 4;         // Quantity traded
+    string side = 5;         // "buy" or "sell" (aggressor side)
+    string trade_id = 6;     // Unique trade ID from exchange
+}
+
+//=============================================================================
+// MarketDataMessage: Union of All Market Data Types
+//=============================================================================
+// This is a WRAPPER message that can contain any market data type
+//
+// WHY USE A WRAPPER?
+// - Single subscriber can handle all message types
+// - ZeroMQ topic filtering still works (topic = product_id)
+// - Type-safe: can't accidentally mix up snapshot vs update
+//
+// PROTOBUF "oneof":
+// - Like a C++ union: only ONE field is set at a time
+// - has_snapshot() returns true if snapshot is populated
+// - More type-safe than void* or variant<>
+//
+// USAGE:
+// ```cpp
+// MarketDataMessage msg;
+// *msg.mutable_snapshot() = my_snapshot;  // Set snapshot
+// 
+// // Later, on receiver side:
+// if (msg.has_snapshot()) {
+//     process_snapshot(msg.snapshot());
+// } else if (msg.has_update()) {
+//     process_update(msg.update());
+// }
+// ```
+//
+// SIZE OVERHEAD:
+// - oneof adds ~1 byte tag to indicate which field is set
+// - Negligible compared to message size (~0.02%)
+message MarketDataMessage {
+    oneof payload {
+        OrderBookSnapshot snapshot = 1;  // Full orderbook state
+        OrderBookUpdate update = 2;      // Incremental changes
+        Trade trade = 3;                 // Executed trade
+    }
+}
+
+//=============================================================================
+// ORDER MANAGEMENT MESSAGES - Trading and Order Lifecycle
+//=============================================================================
+//
+// These messages represent the flow of orders from strategies to exchanges.
+//
+// MESSAGE FLOW:
+// Strategy → NewOrder → OMS → Exchange
+//                       ↓
+//                   OrderAck ← Exchange
+//                       ↓
+//                   Fill ← Exchange
+//
+// ORDER STATES:
+// PENDING → SUBMITTED → ACKNOWLEDGED → PARTIALLY_FILLED → FILLED
+//                                    └─────> CANCELLED
+//                                    └─────> REJECTED
+//
+// ============================================================================
+
+//=============================================================================
+// OrderSide: Buy or Sell
+//=============================================================================
+// Simple enum for order direction
+//
+// USAGE:
+// ```cpp
+// NewOrder order;
+// order.set_side(OrderSide::BUY);
+// ```
+enum OrderSide {
+    BUY = 0;   // Buy order (take ask, add bid)
+    SELL = 1;  // Sell order (take bid, add ask)
+}
+
+//=============================================================================
+// OrderType: How Order Should Execute
+//=============================================================================
+// Different order types have different execution semantics
+//
+// MARKET: Execute immediately at best available price
+// - Pros: Guaranteed fill, immediate execution
+// - Cons: Slippage (price may be worse than expected)
+//
+// LIMIT: Execute only at specified price or better
+// - Pros: Price control, can get better price
+// - Cons: May not fill if price not reached
+//
+// STOP: Trigger at stop price, then execute as market
+// - Usage: Stop-loss orders
+//
+// STOP_LIMIT: Trigger at stop price, then execute as limit
+// - Usage: More controlled stop-loss
+enum OrderType {
+    MARKET = 0;       // Execute at market price
+    LIMIT = 1;        // Execute at limit price or better
+    STOP = 2;         // Stop-loss market order
+    STOP_LIMIT = 3;   // Stop-loss limit order
+}
+
+//=============================================================================
+// TimeInForce: Order Lifetime Policy
+//=============================================================================
+// Determines how long order stays active
+//
+// GTC (Good Til Cancelled):
+// - Stays active until filled or manually cancelled
+// - Most common for limit orders
+//
+// IOC (Immediate or Cancel):
+// - Fill whatever possible immediately, cancel rest
+// - Good for: "I want liquidity NOW, but won't wait"
+//
+// FOK (Fill or Kill):
+// - Either fill entire order immediately, or cancel
+// - Good for: "All or nothing" orders
+//
+// GTT (Good Til Time):
+// - Active until specific timestamp
+// - Good for: Day trading (cancel at market close)
+enum TimeInForce {
+    GTC = 0;  // Good til cancelled
+    IOC = 1;  // Immediate or cancel
+    FOK = 2;  // Fill or kill
+    GTT = 3;  // Good til time
+}
+
+//=============================================================================
+// OrderStatus: Current State of Order
+//=============================================================================
+// Tracks order lifecycle from creation to completion
+//
+// STATE TRANSITIONS:
+// PENDING → SUBMITTED → ACKNOWLEDGED → PARTIALLY_FILLED → FILLED
+//   ↓          ↓            ↓                   ↓
+//   └──────> REJECTED    CANCELLED          CANCELLED
+//
+// PENDING: Order created, not yet sent to exchange
+// SUBMITTED: Sent to exchange, awaiting ack
+// ACKNOWLEDGED: Exchange confirmed receipt
+// PARTIALLY_FILLED: Some quantity filled, rest still active
+// FILLED: Entire order filled
+// CANCELLED: Order cancelled (by user or exchange)
+// REJECTED: Exchange rejected order (invalid price, insufficient funds, etc.)
+enum OrderStatus {
+    PENDING = 0;
+    SUBMITTED = 1;
+    ACKNOWLEDGED = 2;
+    PARTIALLY_FILLED = 3;
+    FILLED = 4;
+    CANCELLED = 5;
+    REJECTED = 6;
+}
+
+//=============================================================================
+// NewOrder: Request to Place a New Order
+//=============================================================================
+// Sent from strategy to Order Management System (OMS)
+//
+// FIELDS:
+// - order_id: Unique ID (UUID or incrementing counter)
+// - strategy_id: Which strategy owns this order
+// - product_id: What to trade (e.g., "BTC-USD")
+// - side: BUY or SELL
+// - type: MARKET or LIMIT
+// - quantity: How much to trade
+// - price: For limit orders (ignored for market orders)
+// - time_in_force: GTC/IOC/FOK/GTT
+// - timestamp_ns: When order was created (for latency measurement)
+//
+// EXAMPLE:
+// ```cpp
+// NewOrder order;
+// order.set_order_id("order-12345");
+// order.set_strategy_id("mean_reversion_v1");
+// order.set_product_id("BTC-USD");
+// order.set_side(OrderSide::BUY);
+// order.set_type(OrderType::LIMIT);
+// order.set_quantity(1.0);
+// order.set_price(50000.00);
+// order.set_time_in_force(TimeInForce::GTC);
+// order.set_timestamp_ns(now_ns());
+// ```
+message NewOrder {
+    string order_id = 1;      // Unique order ID (client-generated)
+    string strategy_id = 2;   // Strategy that owns this order
+    string product_id = 3;    // Trading pair (e.g., "BTC-USD")
+    OrderSide side = 4;       // BUY or SELL
+    OrderType type = 5;       // MARKET, LIMIT, etc.
+    double quantity = 6;      // Quantity to trade
+    double price = 7;         // For limit orders (ignored for market)
+    TimeInForce time_in_force = 8;  // GTC, IOC, FOK, GTT
+    int64 timestamp_ns = 9;   // Order creation timestamp
+}
+
+//=============================================================================
+// CancelOrder: Request to Cancel an Active Order
+//=============================================================================
+// Sent from strategy to OMS to cancel a pending order
+//
+// USAGE:
+// ```cpp
+// CancelOrder cancel;
+// cancel.set_order_id("order-12345");
+// cancel.set_strategy_id("mean_reversion_v1");
+// cancel.set_timestamp_ns(now_ns());
+// ```
+//
+// NOTES:
+// - Cancel is best-effort (order may have already filled)
+// - Exchange may take 1-50ms to process cancel
+// - Always check OrderAck to confirm cancellation
+message CancelOrder {
+    string order_id = 1;      // ID of order to cancel
+    string strategy_id = 2;   // Strategy that owns this order
+    int64 timestamp_ns = 3;   // Cancel request timestamp
+}
+
+//=============================================================================
+// OrderAck: Exchange Acknowledgment of Order
+//=============================================================================
+// Sent from exchange (via OMS) to strategy
+//
+// PURPOSES:
+// 1. Confirm order received (status = ACKNOWLEDGED)
+// 2. Report order rejected (status = REJECTED, message = reason)
+// 3. Confirm cancellation (status = CANCELLED)
+//
+// FIELDS:
+// - order_id: Client's order ID
+// - exchange_order_id: Exchange's order ID (needed for status queries)
+// - status: Current order state
+// - message: Human-readable status/error message
+//
+// EXAMPLE:
+// Success: {order_id: "order-12345", status: ACKNOWLEDGED, message: ""}
+// Reject:  {order_id: "order-12345", status: REJECTED, message: "Insufficient funds"}
+message OrderAck {
+    string order_id = 1;           // Client's order ID
+    string exchange_order_id = 2;  // Exchange's order ID
+    OrderStatus status = 3;        // Order status
+    int64 timestamp_ns = 4;        // Exchange timestamp
+    string message = 5;            // Status/error message
+}
+
+//=============================================================================
+// Fill: Order Execution Notification
+//=============================================================================
+// Sent when an order (or part of it) executes
+//
+// PARTIAL FILLS:
+// - Large order may fill in multiple chunks
+// - Each chunk generates a separate Fill message
+// - Strategy must aggregate to track total filled quantity
+//
+// FIELDS:
+// - fill_price: Actual execution price (may differ from limit price)
+// - fill_quantity: Amount filled in this event
+// - fee: Exchange fee for this fill
+//
+// FEE CALCULATION:
+// - Taker fee: Pay when you cross spread (take liquidity)
+// - Maker fee: Earn rebate when you add liquidity (limit order)
+// - Typical crypto fees: 0.1% taker, 0.05% maker
+//
+// EXAMPLE:
+// Place: BUY 10 BTC @ $50,000 limit
+// Fill 1: {fill_price: 50000, fill_quantity: 3.0, fee: 15.0}
+// Fill 2: {fill_price: 50001, fill_quantity: 7.0, fee: 35.0}
+// Total: Bought 10 BTC at avg $50,000.70, fee $50
+message Fill {
+    string order_id = 1;           // Client's order ID
+    string exchange_order_id = 2;  // Exchange's order ID
+    string strategy_id = 3;        // Strategy that owns this order
+    string product_id = 4;         // Trading pair
+    OrderSide side = 5;            // BUY or SELL
+    double fill_price = 6;         // Execution price
+    double fill_quantity = 7;      // Filled quantity
+    double fee = 8;                // Exchange fee
+    int64 timestamp_ns = 9;        // Fill timestamp
+}
+
+//=============================================================================
+// OrderMessage: Union of All Order Types
+//=============================================================================
+// Wrapper for all order-related messages
+//
+// USAGE:
+// - Single queue can handle all order events
+// - Type-safe dispatch based on which field is set
+message OrderMessage {
+    oneof payload {
+        NewOrder new_order = 1;      // New order request
+        CancelOrder cancel_order = 2;  // Cancel request
+        OrderAck order_ack = 3;      // Order acknowledgment
+        Fill fill = 4;               // Execution notification
+    }
+}
+
+//=============================================================================
+// POSITION & RISK MESSAGES - Portfolio and Risk Management
+//=============================================================================
+//
+// These messages track positions and enforce risk limits
+//
+// ============================================================================
+
+//=============================================================================
+// Position: Current Position in One Product
+//=============================================================================
+// Tracks holdings for one product (e.g., BTC-USD)
+//
+// FIELDS:
+// - quantity: Positive = long, negative = short, 0 = flat
+// - average_price: Average entry price (for P&L calculation)
+// - realized_pnl: Profit from closed trades
+// - unrealized_pnl: Profit from open position (mark-to-market)
+//
+// P&L CALCULATION:
+// Long position:
+//   unrealized_pnl = quantity * (current_price - average_price)
+// Short position:
+//   unrealized_pnl = quantity * (average_price - current_price)
+//
+// EXAMPLE:
+// Buy 10 BTC @ $50,000 avg
+// Current price: $51,000
+// unrealized_pnl = 10 * (51000 - 50000) = $10,000 profit
+message Position {
+    string strategy_id = 1;    // Strategy that owns this position
+    string product_id = 2;     // Trading pair
+    double quantity = 3;       // Position size (+ = long, - = short)
+    double average_price = 4;  // Average entry price
+    double realized_pnl = 5;   // Realized profit/loss
+    double unrealized_pnl = 6; // Unrealized profit/loss
+    int64 timestamp_ns = 7;    // Position update timestamp
+}
+
+//=============================================================================
+// PositionUpdate: Snapshot of All Positions
+//=============================================================================
+// Sent periodically (e.g., every second) or on demand
+//
+// USAGE:
+// - Monitor all positions for one strategy
+// - Calculate total P&L across all products
+// - Risk management: check if within limits
+message PositionUpdate {
+    string strategy_id = 1;         // Strategy ID
+    repeated Position positions = 2;  // All positions
+    double total_pnl = 3;           // Sum of all realized + unrealized P&L
+    int64 timestamp_ns = 4;         // Update timestamp
+}
+
+//=============================================================================
+// RiskLimits: Maximum Allowed Risk Parameters
+//=============================================================================
+// Enforces hard limits to prevent catastrophic losses
+//
+// LIMITS:
+// - max_position_size: Max absolute position (e.g., 100 BTC)
+// - max_order_size: Max single order (e.g., 10 BTC)
+// - max_daily_loss: Max loss in one day (e.g., -$10,000)
+// - max_daily_volume: Max trading volume per day (e.g., $1,000,000)
+//
+// ENFORCEMENT:
+// Before placing order, OMS checks:
+// ```cpp
+// if (new_position > limits.max_position_size) {
+//     reject_order("Position limit exceeded");
+// }
+// if (abs(pnl_today) > limits.max_daily_loss) {
+//     reject_order("Daily loss limit exceeded");
+// }
+// ```
+message RiskLimits {
+    string strategy_id = 1;        // Strategy these limits apply to
+    double max_position_size = 2;  // Max absolute position
+    double max_order_size = 3;     // Max single order size
+    double max_daily_loss = 4;     // Max loss per day (negative number)
+    double max_daily_volume = 5;   // Max trading volume per day
+}
+
+//=============================================================================
+// RiskViolation: Alert When Risk Limit Breached
+//=============================================================================
+// Sent when strategy exceeds risk limits
+//
+// ACTIONS ON VIOLATION:
+// 1. Log alert
+// 2. Notify risk manager
+// 3. Pause strategy (halt new orders)
+// 4. Optionally: Liquidate positions
+//
+// VIOLATION TYPES:
+// - "position_limit": Position size too large
+// - "order_limit": Order size too large
+// - "daily_loss": Daily loss exceeded
+// - "daily_volume": Daily volume exceeded
+message RiskViolation {
+    string strategy_id = 1;      // Strategy that violated limit
+    string violation_type = 2;   // Type of violation
+    string message = 3;          // Detailed violation message
+    int64 timestamp_ns = 4;      // Violation timestamp
+}
+
+//=============================================================================
+// CONTROL MESSAGES - System Management and Health
+//=============================================================================
+//
+// These messages manage system components and health monitoring
+//
+// ============================================================================
+
+//=============================================================================
+// ComponentType: Types of System Components
+//=============================================================================
+// Used for routing and monitoring
+enum ComponentType {
+    MARKET_DATA_SERVER = 0;      // Publishes market data
+    ORDER_MANAGEMENT_SYSTEM = 1;  // Routes and manages orders
+    POSITION_SERVER = 2;         // Tracks positions and P&L
+    STRATEGY = 3;                // Trading strategy
+}
+
+//=============================================================================
+// Heartbeat: Component Health Status
+//=============================================================================
+// Sent periodically (e.g., every second) by each component
+//
+// PURPOSE:
+// - Detect dead/stuck components
+// - Monitor system health
+// - Display component status in dashboard
+//
+// STATUS MAP:
+// - "state": "running" / "paused" / "error"
+// - "msg_count": Number of messages processed
+// - "latency_us": Average processing latency
+// - "queue_depth": Messages waiting in queue
+//
+// USAGE:
+// ```cpp
+// Heartbeat hb;
+// hb.set_component_id("strategy-mean-reversion-1");
+// hb.set_component_type(ComponentType::STRATEGY);
+// hb.set_timestamp_ns(now_ns());
+// (*hb.mutable_status())["state"] = "running";
+// (*hb.mutable_status())["msg_count"] = "12345";
+// ```
+message Heartbeat {
+    string component_id = 1;      // Unique component ID
+    ComponentType component_type = 2;  // Component type
+    int64 timestamp_ns = 3;       // Heartbeat timestamp
+    map<string, string> status = 4;  // Key-value status info
+}
+
+//=============================================================================
+// StrategyControl: Enable/Disable Strategy and Set Limits
+//=============================================================================
+// Sent from control panel to strategy
+//
+// USAGE:
+// - Turn strategy on/off
+// - Update risk limits dynamically
+// - Pause during maintenance
+//
+// EXAMPLE:
+// ```cpp
+// StrategyControl ctrl;
+// ctrl.set_strategy_id("mean_reversion_v1");
+// ctrl.set_enabled(false);  // Pause strategy
+// ```
+message StrategyControl {
+    string strategy_id = 1;      // Strategy to control
+    bool enabled = 2;            // true = run, false = pause
+    RiskLimits risk_limits = 3;  // Updated risk limits
+    int64 timestamp_ns = 4;      // Control message timestamp
+}
+
+//=============================================================================
+// SystemControl: System-Wide Commands
+//=============================================================================
+// Sent from admin console to control entire system
+//
+// COMMANDS:
+// - "start": Start all components
+// - "stop": Graceful shutdown
+// - "pause": Pause trading, keep data feed
+// - "resume": Resume from pause
+//
+// TARGET:
+// - "all": Apply to all components
+// - "market_data_server": Apply to MD server only
+// - "strategy-mean-reversion-1": Apply to specific strategy
+//
+// EXAMPLE:
+// Emergency stop all trading:
+// ```cpp
+// SystemControl ctrl;
+// ctrl.set_command("stop");
+// ctrl.set_target("all");
+// ctrl.set_timestamp_ns(now_ns());
+// ```
+message SystemControl {
+    string command = 1;     // "start", "stop", "pause", "resume"
+    string target = 2;      // component_id or "all"
+    int64 timestamp_ns = 3;  // Command timestamp
+}

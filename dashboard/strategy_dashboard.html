@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HFT Strategy Performance Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3/build/global/luxon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
+    <style>
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-secondary: #111827;
+            --bg-card: #1f2937;
+            --border-color: #374151;
+            --text-primary: #f9fafb;
+            --text-secondary: #9ca3af;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-blue: #3b82f6;
+            --accent-yellow: #f59e0b;
+            --accent-purple: #8b5cf6;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+        
+        .dashboard {
+            max-width: 1800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        header h1 {
+            font-size: 24px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        header h1::before {
+            content: '📈';
+        }
+        
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: var(--bg-card);
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            animation: pulse 2s infinite;
+        }
+        
+        .status-dot.disconnected {
+            background: var(--accent-red);
+            animation: none;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid var(--border-color);
+        }
+        
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        
+        .card-title {
+            font-size: 14px;
+            color: var(--text-secondary);
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .card-value {
+            font-size: 32px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+        
+        .card-value.positive {
+            color: var(--accent-green);
+        }
+        
+        .card-value.negative {
+            color: var(--accent-red);
+        }
+        
+        .card-subtitle {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+        
+        .chart-container {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid var(--border-color);
+            margin-bottom: 24px;
+        }
+        
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        
+        .chart-title {
+            font-size: 18px;
+            font-weight: 600;
+        }
+        
+        .chart-legend {
+            display: flex;
+            gap: 16px;
+            font-size: 13px;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+        
+        .two-col {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 24px;
+        }
+        
+        .metrics-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .metrics-table th,
+        .metrics-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .metrics-table th {
+            color: var(--text-secondary);
+            font-weight: 500;
+            font-size: 13px;
+            text-transform: uppercase;
+        }
+        
+        .metrics-table td {
+            font-variant-numeric: tabular-nums;
+        }
+        
+        .trades-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .trade-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 14px;
+        }
+        
+        .trade-item:last-child {
+            border-bottom: none;
+        }
+        
+        .trade-action {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .trade-action.open {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--accent-green);
+        }
+        
+        .trade-action.close {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--accent-red);
+        }
+        
+        .trade-action.funding {
+            background: rgba(59, 130, 246, 0.2);
+            color: var(--accent-blue);
+        }
+        
+        .badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        
+        .badge.good {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--accent-green);
+        }
+        
+        .badge.warning {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--accent-yellow);
+        }
+        
+        .badge.danger {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--accent-red);
+        }
+        
+        .note-box {
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid var(--accent-blue);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 24px;
+            font-size: 14px;
+        }
+        
+        .note-box strong {
+            color: var(--accent-blue);
+        }
+        
+        footer {
+            text-align: center;
+            padding: 24px;
+            color: var(--text-secondary);
+            font-size: 13px;
+            border-top: 1px solid var(--border-color);
+            margin-top: 24px;
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <header>
+            <h1>HFT Strategy Performance Dashboard</h1>
+            <div class="status-indicator">
+                <div class="status-dot" id="connectionStatus"></div>
+                <span id="connectionText">Connecting to ZMQ...</span>
+            </div>
+        </header>
+        
+        <div class="note-box">
+            <strong>Note:</strong> All metrics shown are <strong>daily (NOT annualized)</strong> as per best practices for HFT strategies. 
+            Sharpe, Sortino, and volatility are calculated on daily returns without annualization factor.
+        </div>
+        
+        <!-- Key Metrics -->
+        <div class="grid">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Total P&L</span>
+                </div>
+                <div class="card-value positive" id="totalPnl">$0.00</div>
+                <div class="card-subtitle">Since inception</div>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Daily Sharpe</span>
+                </div>
+                <div class="card-value" id="sharpeRatio">0.00</div>
+                <div class="card-subtitle">Not annualized</div>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Win Rate</span>
+                </div>
+                <div class="card-value" id="winRate">0%</div>
+                <div class="card-subtitle" id="tradeCount">0 trades</div>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Max Drawdown</span>
+                </div>
+                <div class="card-value negative" id="maxDrawdown">0%</div>
+                <div class="card-subtitle">Peak to trough</div>
+            </div>
+        </div>
+        
+        <!-- Equity Curve -->
+        <div class="chart-container">
+            <div class="chart-header">
+                <h2 class="chart-title">Equity Curve & Drawdown</h2>
+                <div class="chart-legend">
+                    <div class="legend-item">
+                        <div class="legend-dot" style="background: var(--accent-green)"></div>
+                        <span>Equity</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-dot" style="background: var(--accent-red)"></div>
+                        <span>Drawdown</span>
+                    </div>
+                </div>
+            </div>
+            <canvas id="equityChart" height="100"></canvas>
+        </div>
+        
+        <div class="two-col">
+            <!-- Risk Metrics -->
+            <div class="card">
+                <h3 class="chart-title" style="margin-bottom: 16px;">Risk Metrics (Daily, NOT Annualized)</h3>
+                <table class="metrics-table">
+                    <thead>
+                        <tr>
+                            <th>Metric</th>
+                            <th>Value</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Daily Sharpe Ratio</td>
+                            <td id="dailySharpe">0.00</td>
+                            <td><span class="badge" id="sharpeBadge">-</span></td>
+                        </tr>
+                        <tr>
+                            <td>Daily Sortino Ratio</td>
+                            <td id="dailySortino">0.00</td>
+                            <td><span class="badge" id="sortinoBadge">-</span></td>
+                        </tr>
+                        <tr>
+                            <td>Daily Volatility</td>
+                            <td id="dailyVolatility">0.00%</td>
+                            <td><span class="badge" id="volBadge">-</span></td>
+                        </tr>
+                        <tr>
+                            <td>Calmar Ratio</td>
+                            <td id="calmarRatio">0.00</td>
+                            <td><span class="badge" id="calmarBadge">-</span></td>
+                        </tr>
+                        <tr>
+                            <td>Max Drawdown</td>
+                            <td id="maxDD">0.00%</td>
+                            <td><span class="badge" id="ddBadge">-</span></td>
+                        </tr>
+                        <tr>
+                            <td>Current Drawdown</td>
+                            <td id="currentDD">0.00%</td>
+                            <td><span class="badge" id="currDDBadge">-</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Funding Rate Stats -->
+            <div class="card">
+                <h3 class="chart-title" style="margin-bottom: 16px;">Funding Rate Arbitrage</h3>
+                <table class="metrics-table">
+                    <tbody>
+                        <tr>
+                            <td>Funding Collected</td>
+                            <td id="fundingCollected">$0.00</td>
+                        </tr>
+                        <tr>
+                            <td>Avg Funding Diff</td>
+                            <td id="avgFundingDiff">0.00 bps</td>
+                        </tr>
+                        <tr>
+                            <td>Funding Periods</td>
+                            <td id="fundingPeriods">0</td>
+                        </tr>
+                        <tr>
+                            <td>Time in Position</td>
+                            <td id="timeInPosition">0 hours</td>
+                        </tr>
+                        <tr>
+                            <td>Profit Factor</td>
+                            <td id="profitFactor">0.00</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- Recent Trades -->
+        <div class="chart-container">
+            <h3 class="chart-title" style="margin-bottom: 16px;">Recent Trades</h3>
+            <div class="trades-list" id="tradesList">
+                <div class="trade-item">
+                    <span>Waiting for data...</span>
+                </div>
+            </div>
+        </div>
+        
+        <footer>
+            HFT Funding Rate Arbitrage Dashboard | Cold Path Metrics via ZMQ | Real-time Updates
+        </footer>
+    </div>
+    
+    <script>
+        // Chart setup
+        const ctx = document.getElementById('equityChart').getContext('2d');
+        const equityChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: 'Equity',
+                        data: [],
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        fill: true,
+                        tension: 0.4,
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Drawdown',
+                        data: [],
+                        borderColor: '#ef4444',
+                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        fill: true,
+                        tension: 0.4,
+                        yAxisID: 'y1'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            unit: 'hour'
+                        },
+                        grid: {
+                            color: 'rgba(55, 65, 81, 0.5)'
+                        },
+                        ticks: {
+                            color: '#9ca3af'
+                        }
+                    },
+                    y: {
+                        type: 'linear',
+                        display: true,
+                        position: 'left',
+                        grid: {
+                            color: 'rgba(55, 65, 81, 0.5)'
+                        },
+                        ticks: {
+                            color: '#9ca3af',
+                            callback: function(value) {
+                                return '$' + value.toLocaleString();
+                            }
+                        }
+                    },
+                    y1: {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        grid: {
+                            drawOnChartArea: false
+                        },
+                        ticks: {
+                            color: '#9ca3af',
+                            callback: function(value) {
+                                return (value * 100).toFixed(1) + '%';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        
+        // Update functions
+        function updateMetrics(metrics) {
+            // P&L
+            const pnlElem = document.getElementById('totalPnl');
+            pnlElem.textContent = '$' + metrics.pnl.total.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            pnlElem.className = 'card-value ' + (metrics.pnl.total >= 0 ? 'positive' : 'negative');
+            
+            // Sharpe (NOT annualized)
+            document.getElementById('sharpeRatio').textContent = metrics.risk.sharpe_daily.toFixed(3);
+            
+            // Win Rate
+            document.getElementById('winRate').textContent = (metrics.trades.win_rate * 100).toFixed(1) + '%';
+            document.getElementById('tradeCount').textContent = metrics.trades.total + ' trades';
+            
+            // Max Drawdown
+            document.getElementById('maxDrawdown').textContent = (metrics.risk.max_drawdown * 100).toFixed(2) + '%';
+            
+            // Risk Metrics Table
+            document.getElementById('dailySharpe').textContent = metrics.risk.sharpe_daily.toFixed(3);
+            updateBadge('sharpeBadge', metrics.risk.sharpe_daily, [0.5, 1.0], false);
+            
+            document.getElementById('dailySortino').textContent = metrics.risk.sortino_daily.toFixed(3);
+            updateBadge('sortinoBadge', metrics.risk.sortino_daily, [0.7, 1.5], false);
+            
+            document.getElementById('dailyVolatility').textContent = (metrics.risk.volatility_daily * 100).toFixed(3) + '%';
+            updateBadge('volBadge', metrics.risk.volatility_daily, [0.02, 0.05], true);
+            
+            document.getElementById('calmarRatio').textContent = metrics.risk.calmar.toFixed(2);
+            updateBadge('calmarBadge', metrics.risk.calmar, [1.0, 2.0], false);
+            
+            document.getElementById('maxDD').textContent = (metrics.risk.max_drawdown * 100).toFixed(2) + '%';
+            updateBadge('ddBadge', metrics.risk.max_drawdown, [0.05, 0.1], true);
+            
+            document.getElementById('currentDD').textContent = (metrics.risk.current_drawdown * 100).toFixed(2) + '%';
+            updateBadge('currDDBadge', metrics.risk.current_drawdown, [0.02, 0.05], true);
+            
+            // Funding Stats
+            document.getElementById('fundingCollected').textContent = '$' + metrics.funding.collected.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            document.getElementById('avgFundingDiff').textContent = metrics.funding.avg_diff_bps.toFixed(2) + ' bps';
+            document.getElementById('fundingPeriods').textContent = metrics.funding.periods;
+            document.getElementById('timeInPosition').textContent = metrics.funding.hours_in_position.toFixed(1) + ' hours';
+        }
+        
+        function updateBadge(elemId, value, thresholds, inverse) {
+            const elem = document.getElementById(elemId);
+            let status, className;
+            
+            if (inverse) {
+                // Lower is better (e.g., drawdown, volatility)
+                if (value < thresholds[0]) {
+                    status = 'Good';
+                    className = 'good';
+                } else if (value < thresholds[1]) {
+                    status = 'Moderate';
+                    className = 'warning';
+                } else {
+                    status = 'High';
+                    className = 'danger';
+                }
+            } else {
+                // Higher is better (e.g., Sharpe, Sortino)
+                if (value > thresholds[1]) {
+                    status = 'Excellent';
+                    className = 'good';
+                } else if (value > thresholds[0]) {
+                    status = 'Good';
+                    className = 'warning';
+                } else {
+                    status = 'Poor';
+                    className = 'danger';
+                }
+            }
+            
+            elem.textContent = status;
+            elem.className = 'badge ' + className;
+        }
+        
+        function addEquityPoint(timestamp, equity, drawdown) {
+            const chart = equityChart;
+            
+            chart.data.labels.push(new Date(timestamp));
+            chart.data.datasets[0].data.push(equity);
+            chart.data.datasets[1].data.push(drawdown);
+            
+            // Keep only last 500 points
+            if (chart.data.labels.length > 500) {
+                chart.data.labels.shift();
+                chart.data.datasets[0].data.shift();
+                chart.data.datasets[1].data.shift();
+            }
+            
+            chart.update('none');
+        }
+        
+        function addTrade(trade) {
+            const list = document.getElementById('tradesList');
+            
+            // Remove "waiting" message if present
+            if (list.children.length === 1 && list.children[0].textContent.includes('Waiting')) {
+                list.innerHTML = '';
+            }
+            
+            const actionClass = trade.action.toLowerCase();
+            const pnlClass = trade.pnl >= 0 ? 'positive' : 'negative';
+            
+            const tradeHtml = `
+                <div class="trade-item">
+                    <div>
+                        <span class="trade-action ${actionClass}">${trade.action}</span>
+                        <span style="margin-left: 8px; color: var(--text-secondary)">${trade.symbol}</span>
+                    </div>
+                    <div>
+                        <span style="color: var(--text-secondary)">${trade.long_exchange} → ${trade.short_exchange}</span>
+                    </div>
+                    <div style="font-weight: 600" class="${pnlClass}">
+                        $${trade.pnl.toFixed(2)}
+                    </div>
+                </div>
+            `;
+            
+            list.insertAdjacentHTML('afterbegin', tradeHtml);
+            
+            // Keep only last 50 trades
+            while (list.children.length > 50) {
+                list.removeChild(list.lastChild);
+            }
+        }
+        
+        // WebSocket connection to ZMQ bridge (REAL DATA)
+        let ws = null;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+        
+        function connectWebSocket() {
+            const wsUrl = 'ws://localhost:8765';
+            console.log('[WS] Connecting to', wsUrl);
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                console.log('[WS] Connected to ZMQ bridge');
+                reconnectAttempts = 0;
+                document.getElementById('connectionStatus').classList.remove('disconnected');
+                document.getElementById('connectionText').textContent = 'Connected (REAL DATA)';
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    console.log('[WS] Received:', msg.topic);
+                    
+                    if (msg.topic === 'METRICS') {
+                        const data = msg.data;
+                        const metrics = {
+                            pnl: data.pnl || {},
+                            trades: data.trades || {},
+                            risk: data.risk || {},
+                            funding: data.funding || {}
+                        };
+                        updateMetrics(metrics);
+                    } else if (msg.topic === 'EQUITY') {
+                        const data = msg.data;
+                        addEquityPoint(data.timestamp_ms, data.equity, data.drawdown);
+                    } else if (msg.topic === 'TRADE') {
+                        addTrade(msg.data);
+                    }
+                } catch (e) {
+                    console.error('[WS] Parse error:', e);
+                }
+            };
+            
+            ws.onclose = () => {
+                console.log('[WS] Disconnected');
+                document.getElementById('connectionStatus').classList.add('disconnected');
+                document.getElementById('connectionText').textContent = 'Disconnected';
+                
+                if (reconnectAttempts < maxReconnectAttempts) {
+                    reconnectAttempts++;
+                    console.log(`[WS] Reconnecting in 3s (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
+                    setTimeout(connectWebSocket, 3000);
+                }
+            };
+            
+            ws.onerror = (error) => {
+                console.error('[WS] Error:', error);
+            };
+        }
+        
+        // Fallback demo mode if WebSocket fails (CLEARLY MARKED)
+        function startDemoMode() {
+            console.log('[DEMO] Starting demo mode - NOT REAL DATA');
+            document.getElementById('connectionText').textContent = '⚠️ DEMO MODE (Not Real Data)';
+            document.getElementById('connectionStatus').classList.add('disconnected');
+            
+            let equity = 100000;
+            let maxEquity = equity;
+            let totalPnl = 0;
+            let trades = 0;
+            let winners = 0;
+            
+            setInterval(() => {
+                const change = (Math.random() - 0.45) * 100;
+                equity += change;
+                totalPnl += change;
+                trades++;
+                if (change > 0) winners++;
+                
+                maxEquity = Math.max(maxEquity, equity);
+                const drawdown = (maxEquity - equity) / maxEquity;
+                
+                const metrics = {
+                    pnl: { total: totalPnl, daily: change },
+                    trades: { total: trades, winners: winners, win_rate: winners / trades },
+                    risk: { sharpe_daily: 0.15, max_drawdown: drawdown },
+                    funding: { collected: totalPnl * 0.8, avg_diff_bps: 5 + Math.random() * 5 }
+                };
+                
+                updateMetrics(metrics);
+                addEquityPoint(Date.now(), equity, drawdown);
+            }, 1000);
+        }
+        
+        // Start connection on load
+        window.onload = () => {
+            console.log('[DASHBOARD] Starting - connecting to REAL data via WebSocket');
+            connectWebSocket();
+            
+            // If no connection after 5 seconds, offer demo mode
+            setTimeout(() => {
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    console.log('[DASHBOARD] No WebSocket connection, offering demo mode');
+                    if (confirm('Could not connect to real data server.\n\nStart demo mode?\n\n(For real data, run:\n1. ./build/real_dashboard_server --backtest BTCUSDT 1.0\n2. python3 dashboard/zmq_websocket_bridge.py)')) {
+                        startDemoMode();
+                    }
+                }
+            }, 5000);
+        };
+    </script>
+</body>
+</html>

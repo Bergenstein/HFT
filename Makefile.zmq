@@ -1,0 +1,55 @@
+# Makefile for ZeroMQ testing
+CXX := c++
+CXXFLAGS := -std=c++20 -Wall -Wextra -O2 -pthread
+
+# Library paths
+ZMQ_PREFIX := $(shell brew --prefix zeromq)
+CPPZMQ_PREFIX := $(shell brew --prefix cppzmq)
+PROTOBUF_PREFIX := $(shell brew --prefix protobuf)
+ABSEIL_PREFIX := $(shell brew --prefix abseil)
+
+INCLUDES := -I. -I$(ZMQ_PREFIX)/include -I$(CPPZMQ_PREFIX)/include \
+            -I$(PROTOBUF_PREFIX)/include -I$(ABSEIL_PREFIX)/include
+
+# Core abseil libraries (only those that exist)
+ABSEIL_LIBS := -labsl_log_internal_check_op -labsl_log_internal_conditions \
+               -labsl_log_internal_format -labsl_log_internal_globals \
+               -labsl_log_internal_log_sink_set -labsl_log_internal_message \
+               -labsl_log_severity -labsl_log_entry -labsl_log_globals \
+               -labsl_hash -labsl_city -labsl_raw_hash_set -labsl_hashtablez_sampler \
+               -labsl_exponential_biased \
+               -labsl_strings -labsl_strings_internal -labsl_str_format_internal \
+               -labsl_cord -labsl_cordz_info -labsl_cord_internal \
+               -labsl_cordz_functions -labsl_cordz_handle \
+               -labsl_crc_cord_state -labsl_crc32c -labsl_crc_internal -labsl_crc_cpu_detect \
+               -labsl_synchronization -labsl_graphcycles_internal -labsl_kernel_timeout_internal \
+               -labsl_time -labsl_civil_time -labsl_time_zone \
+               -labsl_malloc_internal -labsl_base -labsl_spinlock_wait \
+               -labsl_int128 -labsl_throw_delegate -labsl_stacktrace -labsl_symbolize \
+               -labsl_debugging_internal -labsl_demangle_internal -labsl_raw_logging_internal
+
+LIBS := -L$(ZMQ_PREFIX)/lib -L$(PROTOBUF_PREFIX)/lib -L$(ABSEIL_PREFIX)/lib \
+        -lzmq -lprotobuf -lpthread $(ABSEIL_LIBS)
+
+# Test binary
+TEST_ZMQ := build/test_zmq_pubsub
+
+.PHONY: all clean test
+
+all: $(TEST_ZMQ)
+
+$(TEST_ZMQ): run/test_zmq_pubsub.cpp proto/messages.pb.cc
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $^ $(LIBS)
+
+test: $(TEST_ZMQ)
+	./$(TEST_ZMQ)
+
+clean:
+	rm -f $(TEST_ZMQ)
+
+help:
+	@echo "ZeroMQ Build Targets:"
+	@echo "  make all    - Build test binary"
+	@echo "  make test   - Build and run ZeroMQ test"
+	@echo "  make clean  - Remove built files"

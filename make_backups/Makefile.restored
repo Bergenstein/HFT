@@ -1,0 +1,152 @@
+# Compiler and flags
+CXX := c++
+CXXFLAGS := -std=c++20 -O2 -Wall -Wextra -march=native -pthread
+INCLUDES := -I. -I/opt/homebrew/include
+LIBS := -L/opt/homebrew/lib -lboost_system -lboost_thread-mt -lssl -lcrypto
+
+# Build directory
+BUILDDIR := build
+
+# Main sources
+STREAM_MAIN    := run/stream_and_record.cpp
+STREAM_LATENCY := run/stream_with_latency.cpp
+REPLAY_MAIN    := run/replay_and_book.cpp
+BACKTEST_MAIN  := run/backtest_strategy.cpp
+SCAN_MAIN      := run/scan_recording.cpp
+MULTI_ARB_MAIN := run/multi_exchange_arbitrage.cpp
+
+# Common sources
+COMMON_SRCS := discovery/coinbase_product_discovery.cpp
+
+# Object files
+COMMON_OBJS := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(COMMON_SRCS))
+DISCOVERY_OBJ := $(BUILDDIR)/discovery/coinbase_product_discovery.o
+
+STREAM_OBJ     := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(STREAM_MAIN))
+REPLAY_OBJ     := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(REPLAY_MAIN))
+BACKTEST_OBJ   := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(BACKTEST_MAIN))
+SCAN_OBJ       := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(SCAN_MAIN))
+STREAM_LAT_OBJ := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(STREAM_LAT_MAIN))
+
+# Output binaries
+STREAM_BIN     := $(BUILDDIR)/stream_and_record
+REPLAY_BIN     := $(BUILDDIR)/replay_and_book
+BACKTEST_BIN   := $(BUILDDIR)/backtest_strategy
+SCAN_BIN       := $(BUILDDIR)/scan_recording
+STREAM_LAT_BIN := $(BUILDDIR)/stream_with_latency
+MULTI_ARB_BIN  := $(BUILDDIR)/multi_exchange_arbitrage
+
+ALL_BINS := $(STREAM_BIN) $(REPLAY_BIN) $(BACKTEST_BIN) $(SCAN_BIN) $(STREAM_LAT_BIN)
+
+# Build targets
+.PHONY: all stream stream_latency replay backtest scan multi_exchange_arb clean help
+all: $(ALL_BINS)
+
+stream:   $(STREAM_BIN)
+stream_latency: $(STREAM_LAT_BIN)
+replay:   $(REPLAY_BIN)
+backtest: $(BACKTEST_BIN)
+scan:     $(SCAN_BIN)
+multi_exchange_arb: $(MULTI_ARB_BIN)
+
+# Generic rule for object files
+$(BUILDDIR)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+# Link binaries
+$(STREAM_BIN): $(COMMON_OBJS) $(STREAM_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
+
+$(STREAM_LAT_BIN): $(COMMON_OBJS) $(BUILDDIR)/run/stream_with_latency.o
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
+
+$(REPLAY_BIN): $(COMMON_OBJS) $(REPLAY_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
+
+$(BACKTEST_BIN): $(COMMON_OBJS) $(BACKTEST_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
+
+$(SCAN_BIN): $(COMMON_OBJS) $(SCAN_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
+
+$(MULTI_ARB_BIN): $(BUILDDIR)/run/multi_exchange_arbitrage.o
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS) -lwebsocketpp -lssl -lcrypto -lpthread
+
+# Production Multi-Exchange Pipeline
+PROD_MULTI_EXCHANGE := run/production_multi_exchange.cpp
+PROD_MULTI_BIN := $(BUILDDIR)/production_multi_exchange
+
+.PHONY: production_pipeline prod_multi
+production_pipeline prod_multi: $(PROD_MULTI_BIN)
+
+$(PROD_MULTI_BIN): $(PROD_MULTI_EXCHANGE)
+	@mkdir -p $(BUILDDIR)
+	$(CXX) -std=c++20 -O2 -pthread $(INCLUDES) -o $@ $< $(LIBS) -lsqlite3 -lzmq
+	@echo "✓ Built production multi-exchange pipeline"
+
+# Test targets
+.PHONY: test_lockfree_queues test_zmq_pubsub test_arbitrage_demo integrated_pipeline_demo
+
+test_lockfree_queues: $(BUILDDIR)/test_lockfree_queues
+$(BUILDDIR)/test_lockfree_queues: run/test_lockfree_queues.cpp
+	@mkdir -p $(BUILDDIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $< $(LIBS)
+
+test_zmq_pubsub: $(BUILDDIR)/test_zmq_pubsub
+$(BUILDDIR)/test_zmq_pubsub: run/test_zmq_pubsub.cpp
+	@mkdir -p $(BUILDDIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $< $(LIBS) -lzmq
+
+test_arbitrage_demo: $(BUILDDIR)/test_arbitrage_demo
+$(BUILDDIR)/test_arbitrage_demo: run/test_arbitrage_demo.cpp
+	@mkdir -p $(BUILDDIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $< $(LIBS)
+
+integrated_pipeline_demo: $(BUILDDIR)/integrated_pipeline_demo
+$(BUILDDIR)/integrated_pipeline_demo: run/integrated_pipeline_demo.cpp
+	@mkdir -p $(BUILDDIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $< $(LIBS) -lsqlite3 -lzmq
+
+# Complete latency test
+$(BUILDDIR)/complete_latency_test: run/complete_latency_test.cpp
+	@mkdir -p $(BUILDDIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $< $(LIBS)
+
+# Test all strategies
+.PHONY: test_all_strategies
+test_all_strategies:
+	@echo "Running strategy backtests..."
+	@$(BACKTEST_BIN) data/*.ndjson 2>&1 | tail -20
+
+# Clean
+clean:
+	rm -rf $(BUILDDIR)
+
+# Help text
+help:
+	@echo "Build targets:"
+	@echo "  make all                      - Build all binaries"
+	@echo "  make stream                   - Build stream_and_record"
+	@echo "  make stream_latency           - Build stream_with_latency"
+	@echo "  make replay                   - Build replay_and_book"
+	@echo "  make backtest                 - Build backtest_strategy"
+	@echo "  make scan                     - Build scan_recording"
+	@echo "  make multi_exchange_arb       - Build multi-exchange arbitrage"
+	@echo "  make test_lockfree_queues     - Build lockfree queue test"
+	@echo "  make test_zmq_pubsub          - Build ZMQ pub/sub test"
+	@echo "  make test_arbitrage_demo      - Build arbitrage demo"
+	@echo "  make integrated_pipeline_demo - Build integrated pipeline demo"
+	@echo "  make production_pipeline      - Build production multi-exchange pipeline"
+	@echo ""
+	@echo "Test targets:"
+	@echo "  make test_all_strategies      - Run all strategy backtests"
+	@echo ""
+	@echo "Clean:"
+	@echo "  make clean                    - Remove build directory"

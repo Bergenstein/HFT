@@ -1,0 +1,226 @@
+// run/integrated_pipeline_demo.cpp - Complete Multi-Exchange Pipeline Demo
+#include "../pipeline/spsc_queue.hpp"
+#include "../pipeline/normalized_data.hpp"
+#include "../storage/sqlite/market_data_store.hpp"
+#include "../storage/inmem/latest_quotes.hpp"
+#include "../core/cpu_affinity.hpp"
+#include <iostream>
+#include <thread>
+#include <atomic>
+#include <chrono>
+
+using namespace pipeline;
+using namespace storage;
+
+// Simulated exchange data feed
+class SimulatedExchangeFeed {
+public:
+    SimulatedExchangeFeed(const std::string& exchange, SPSCQueue<NormalizedQuote>& queue)
+        : exchange_(exchange), queue_(queue), running_(false) {}
+    
+    void start() {
+        running_ = true;
+        thread_ = std::thread([this]() {
+            std::cout << "[" << exchange_ << "] Feed started\n";
+            
+            // Simulate real market data
+            uint64_t seq = 0;
+            while (running_) {
+                NormalizedQuote quote;
+                quote.exchange = exchange_;
+                quote.product_id = "BTC-USDT";
+                quote.base = "BTC";
+                quote.quote = "USDT";
+                quote.best_bid = 42000.0 + (seq % 100);
+                quote.best_ask = 42001.0 + (seq % 100);
+                quote.bid_size = 1.5;
+                quote.ask_size = 2.0;
+                quote.sequence = seq++;
+                quote.exchange_timestamp = std::chrono::system_clock::now();
+                quote.local_timestamp = std::chrono::system_clock::now();
+                
+                // Push to queue (wait-free)
+                while (!queue_.try_push(quote) && running_) {
+                    // Queue full, spin
+                }
+                
+                // Simulate realistic arrival rate: 100 quotes/sec = 10ms interval
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            
+            std::cout << "[" << exchange_ << "] Feed stopped\n";
+        });
+    }
+    
+    void stop() {
+        running_ = false;
+        if (thread_.joinable()) thread_.join();
+    }
+
+private:
+    std::string exchange_;
+    SPSCQueue<NormalizedQuote>& queue_;
+    std::atomic<bool> running_;
+    std::thread thread_;
+};
+
+int main() {
+    std::cout << R"(
+╔════════════════════════════════════════════════════════════════════╗
+║     INTEGRATED HFT PIPELINE - MULTI-EXCHANGE DEMONSTRATION         ║
+║                                                                    ║
+║  Exchange Feeds → Lock-Free Queue → Strategy Thread               ║
+║                                  → In-Memory Cache                 ║
+║                                  → SQLite Storage                  ║
+╚════════════════════════════════════════════════════════════════════╝
+)" << "\n";
+    
+    // Create lock-free queues (1M capacity each)
+    SPSCQueue<NormalizedQuote> binance_queue(1048576);
+    SPSCQueue<NormalizedQuote> coinbase_queue(1048576);
+    SPSCQueue<NormalizedQuote> kraken_queue(1048576);
+    
+    // Create storage layers
+    MarketDataStore sqlite_store("demo_market_data.db");
+    LatestQuotesCache inmem_cache;
+    
+    // Statistics
+    std::atomic<uint64_t> quotes_processed{0};
+    std::atomic<uint64_t> quotes_stored{0};
+    std::atomic<bool> running{true};
+    
+    // Start simulated exchange feeds
+    std::cout << "[MAIN] Starting simulated exchange feeds...\n";
+    SimulatedExchangeFeed binance_feed("binance", binance_queue);
+    SimulatedExchangeFeed coinbase_feed("coinbase", coinbase_queue);
+    SimulatedExchangeFeed kraken_feed("kraken", kraken_queue);
+    
+    binance_feed.start();
+    coinbase_feed.start();
+    kraken_feed.start();
+    
+    // Processing thread (HOT PATH - could be CPU pinned)
+    std::thread processor([&]() {
+        std::cout << "[PROCESSOR] Started (could pin to Core 1)\n";
+        
+        NormalizedQuote quote;
+        while (running) {
+            bool processed_any = false;
+            
+            // Process Binance queue
+            if (binance_queue.try_pop(quote)) {
+                inmem_cache.update(quote);
+                quotes_processed++;
+                processed_any = true;
+            }
+            
+            // Process Coinbase queue
+            if (coinbase_queue.try_pop(quote)) {
+                inmem_cache.update(quote);
+                quotes_processed++;
+                processed_any = true;
+            }
+            
+            // Process Kraken queue
+            if (kraken_queue.try_pop(quote)) {
+                inmem_cache.update(quote);
+                quotes_processed++;
+                processed_any = true;
+            }
+            
+            if (!processed_any) {
+                std::this_thread::yield();
+            }
+        }
+        
+        std::cout << "[PROCESSOR] Stopped\n";
+    });
+    
+    // Storage thread (COLD PATH - different CPU core)
+    std::thread storage_thread([&]() {
+        std::cout << "[STORAGE] Started (could pin to Core 4)\n";
+        
+        sqlite_store.begin_transaction();
+        int batch_count = 0;
+        const int BATCH_SIZE = 1000;
+        
+        while (running) {
+            // Get quotes from in-memory cache and persist
+            auto binance_quotes = inmem_cache.get_exchange_quotes("binance");
+            
+            for (const auto& quote : binance_quotes) {
+                if (sqlite_store.insert_quote(quote)) {
+                    quotes_stored++;
+                    batch_count++;
+                    
+                    if (batch_count >= BATCH_SIZE) {
+                        sqlite_store.commit_transaction();
+                        sqlite_store.begin_transaction();
+                        batch_count = 0;
+                    }
+                }
+            }
+            
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        
+        sqlite_store.commit_transaction();
+        std::cout << "[STORAGE] Stopped\n";
+    });
+    
+    // Monitoring thread
+    std::thread monitor([&]() {
+        auto start_time = std::chrono::steady_clock::now();
+        
+        for (int i = 0; i < 10 && running; i++) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - start_time).count();
+            
+            auto qps = quotes_processed.load() / std::max(1LL, elapsed);
+            
+            std::cout << "\n[STATS] T+" << elapsed << "s"
+                      << " | Processed: " << quotes_processed.load()
+                      << " | QPS: " << qps
+                      << " | In-Mem: " << inmem_cache.size()
+                      << " | Stored: " << quotes_stored.load()
+                      << " | DB Rows: " << sqlite_store.get_quote_count()
+                      << "\n";
+            
+            // Show latest quotes
+            NormalizedQuote latest;
+            if (inmem_cache.get("binance", "BTC-USDT", latest)) {
+                std::cout << "  [binance] BTC-USDT: " << latest.best_bid 
+                          << " / " << latest.best_ask 
+                          << " (spread: " << latest.spread_bps() << " bps)\n";
+            }
+        }
+        
+        std::cout << "\n[MONITOR] Stopping system...\n";
+        running = false;
+    });
+    
+    // Wait for monitoring to finish
+    monitor.join();
+    
+    // Stop feeds
+    binance_feed.stop();
+    coinbase_feed.stop();
+    kraken_feed.stop();
+    
+    // Wait for processing threads
+    processor.join();
+    storage_thread.join();
+    
+    // Final statistics
+    std::cout << "\n" << std::string(70, '=') << "\n";
+    std::cout << "FINAL STATISTICS\n";
+    std::cout << std::string(70, '=') << "\n";
+    std::cout << "Total quotes processed: " << quotes_processed.load() << "\n";
+    std::cout << "Quotes in database:     " << sqlite_store.get_quote_count() << "\n";
+    std::cout << "In-memory cache size:   " << inmem_cache.size() << "\n";
+    std::cout << "\n✓ Complete pipeline demonstration finished\n\n";
+    
+    return 0;
+}

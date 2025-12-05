@@ -1,0 +1,42 @@
+1. Okay what is next in this architectural document shared earlier? 2. Furthermore, can we have support for ML/DNN to be also used as models for building strategies and if so how? 
+3. Then, can we use paper testing logic as well? If so how?
+4. Can do replicate the exact same thing for binance and for Kraken? 
+
+5. So we retrieve data from multiple exchange => feed into normaliser => use an in-mem queue => in-mem store to store the latest data of a given script in a given exchange and to also SQLite to store the historical data of all scripts from all exchanges. We also need to use 0MQ to broadcast the data to multiple strategy engines that are subscribed to the data feed. Is that correct?
+
+6. Calculate technical indicators and use then as features from ta based strategies and for ML based strategies. 
+
+7. Build a Centralise exchange simulator that is 100% copy of sth like Coinbase, Kraken, Binance etc for forward testing and integration. Check documentations first.
+
+
+8. Add CPU pinning 1/3 handling market data 1/3 order flow management (no blockage. Shall immediately go to the exchange. Put on another thread) 3. Logging and low priority work 
+
+Mutiple strategies single thread latency will increase. Multi thread and CPU pinning. One strategy in one instance. Config single threaded or multi-threaded. If config is on -> single threaded. 
+
+Keep multi-threads (multiple strategy in the same exchange). 
+
+Arbitrage strategy connect with multiple exchange 
+
+Strategy based on momentum as it comes anytime in crypto. It is very fast and we need to use single thread as they are very fast. It can be slippage of 1-2-3% as market is moving very fast. 
+
+1. 0MQ is built strategy can independently subscribe to 0MQ 
+2. HFT strategies based 
+3. Order execution management system 
+4. demo brokerages 
+5. integrated with Indian market 
+6. UI monitors all trades 
+7. trade flows 
+
+TODO for Thursday 4 December. 
+
+
+There are a lot of compilation issues when I try to compile the code. My tests work but I want to cpmpile the system fully. The issues are following: 1. there are issues with md/ some methods are called that dont exist; maybe the orderbook related and maybe more. 2. There are issued with CPU pinning 3. the APIs for different exchanges shall have their params or placeholders such as via some config file to be able to retrieve L2 data and make calls. We have issues with all these. We need to make sure the code compiles fully and can be dockerised in totality later. The aim is to dockerise it in totality and then be able to run it on an EC2 instance. 
+
+
+Next, we need to make sure that the backtesting framework is robust and can handle different types of strategies, including ML/DNN based strategies. This means we need to have a clear interface for strategy implementation and ensure that the backtesting engine can simulate market conditions accurately. The backtest shall not use simulated data but rather replay historical data from the SQLite database to ensure realism. 
+
+
+Furthermore, we need to have a proper README file that explains how to compile the code, run the tests, and then dockerise it. The README should also explain how to set up the config files for different exchanges and how to enable/disable features like CPU pinning, multi-threading, etc. 
+
+Finally, we need to ensure that the code is modular enough to allow for easy addition of new exchanges in the future. This means having a clear interface for exchange APIs and ensuring that the data normalization process can handle data from any exchange seamlessly.  
+

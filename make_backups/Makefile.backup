@@ -1,0 +1,249 @@
+SHELL := /bin/bash
+CXX       ?= c++
+CXXFLAGS  := -std=c++20 -Wall -Wextra -O2 -pthread
+
+# Define library prefixes with fallback paths
+OPENSSL_PREFIX := $(shell brew --prefix openssl@3 2>/dev/null || echo /opt/homebrew/opt/openssl@3)
+BOOST_PREFIX   := $(shell brew --prefix boost 2>/dev/null || echo /opt/homebrew/opt/boost)
+JSON_PREFIX    := $(shell brew --prefix nlohmann-json 2>/dev/null || echo /opt/homebrew/opt/nlohmann-json)
+
+# Check if libraries exist
+ifeq (,$(wildcard $(OPENSSL_PREFIX)/lib/libssl.a))
+    $(error OpenSSL not found at $(OPENSSL_PREFIX))
+endif
+ifeq (,$(wildcard $(BOOST_PREFIX)/include/boost))
+    $(error Boost not found at $(BOOST_PREFIX))
+endif
+ifeq (,$(wildcard $(JSON_PREFIX)/include/nlohmann))
+    $(error nlohmann-json not found at $(JSON_PREFIX))
+endif
+
+INCLUDES := -I. -I$(BOOST_PREFIX)/include -I$(OPENSSL_PREFIX)/include -I$(JSON_PREFIX)/include
+LIBS     := -L$(OPENSSL_PREFIX)/lib -lssl -lcrypto -lpthread
+
+BUILDDIR := build
+SRCDIRS  := discovery md net io core bt
+
+COMMON_SRCS := $(foreach d,$(SRCDIRS),$(wildcard $(d)/*.cpp))
+COMMON_OBJS := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(COMMON_SRCS))
+
+STREAM_MAIN   := run/stream_and_record.cpp
+REPLAY_MAIN   := run/replay_and_book.cpp
+BACKTEST_MAIN := run/backtest_imbalance.cpp
+SCAN_MAIN     := run/scan_recording.cpp
+
+STREAM_OBJ    := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(STREAM_MAIN))
+REPLAY_OBJ    := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(REPLAY_MAIN))
+BACKTEST_OBJ  := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(BACKTEST_MAIN))
+SCAN_OBJ      := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(SCAN_MAIN))
+
+STREAM_BIN    := $(BUILDDIR)/stream_and_record
+REPLAY_BIN    := $(BUILDDIR)/replay_and_book
+BACKTEST_BIN  := $(BUILDDIR)/backtest_imbalance
+SCAN_BIN      := $(BUILDDIR)/scan_recording
+
+.PHONY: all
+all: $(STREAM_BIN) $(REPLAY_BIN) $(BACKTEST_BIN) $(SCAN_BIN)
+
+$(BUILDDIR)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+$(STREAM_BIN): $(COMMON_OBJS) $(STREAM_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
+
+$(REPLAY_BIN): $(COMMON_OBJS) $(REPLAY_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
+
+$(BACKTEST_BIN): $(COMMON_OBJS) $(BACKTEST_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
+
+$(SCAN_BIN): $(SCAN_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+.PHONY: stream replay backtest scan
+stream:   $(STREAM_BIN)
+replay:   $(REPLAY_BIN)
+backtest: $(BACKTEST_BIN)
+scan:     $(SCAN_BIN)
+
+.PHONY: scan_recording
+scan_recording: $(SCAN_BIN)
+	@LATEST_REC=$$(ls -t data/*.ndjson 2>/dev/null | head -n1); \
+	if [ -z "$$LATEST_REC" ]; then \
+		echo "Error: No data/*.ndjson files found. Run 'make stream' first."; \
+		exit 1; \
+	fi; \
+	echo "--- Scanning latest recording: $$LATEST_REC ---"; \
+	$(SCAN_BIN) "$$LATEST_REC"
+
+.PHONY: run_backtest
+run_backtest: $(BACKTEST_BIN)
+	@test -n "$(FILE)" || { echo "Error: FILE must be specified."; exit 2; }; \
+	test -f "$(FILE)" || { echo "Error: FILE $(FILE) does not exist."; exit 2; }; \
+	test -n "$(PROD)" || { echo "Error: PROD must be specified."; exit 2; }; \
+	test -n "$(QTY)" || { echo "Error: QTY must be specified."; exit 2; }; \
+	test -n "$(THR)" || { echo "Error: THR must be specified."; exit 2; }; \
+	test -n "$(HOLD)" || { echo "Error: HOLD must be specified."; exit 2; }; \
+	$(BACKTEST_BIN) "$(FILE)" "$(PROD)" "$(QTY)" "$(THR)" "$(HOLD)" "$(CAP)"
+
+.PHONY: test_link
+test_link: $(BACKTEST_BIN)
+	@REC=$$(ls -t data/*.ndjson 2>/dev/null | while IFS= read -r f; do \
+		grep -aFq "\"product_id\":\"LINK-USD\"" "$$f" && { echo "$$f"; break; }; \
+	done); \
+	if [ -z "$$REC" ]; then \
+		echo "Error: No LINK-USD data found in data/*.ndjson"; \
+		exit 1; \
+	fi; \
+	echo "Using $$REC"; \
+	$(BACKTEST_BIN) "$$REC" "LINK-USD" 1.0 0.6 150 10000
+
+.PHONY: clean
+clean:
+	rm -rf $(BUILDDIR)
+
+.PHONY: backtest_all
+backtest_all: $(BACKTEST_BIN)
+	@FILE=$$(ls -t data/filtered_*.ndjson data/raw_*.ndjson 2>/dev/null | head -n1); \
+	if [ -z "$$FILE" ]; then \
+		echo "Error: No NDJSON files found in data/"; \
+		exit 1; \
+	fi; \
+	PRODS=$$( { \
+		grep -aoE '"product_id"[[:space:]]*:[[:space:]]*"[^"]+"' "$$FILE" 2>/dev/null \
+			| sed -E 's/.*"product_id"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/'; \
+		grep -aoE '\\\"product_id\\\":\\\"[^"]+\\\"' "$$FILE" 2>/dev/null \
+			| sed -E 's/.*\\\"product_id\\\":\\\"([^"]+)\\\".*/\1/'; \
+	} | awk 'NF' | sort -u | tr '\n' ',' | sed 's/,$$//'); \
+	if [ -z "$$PRODS" ]; then \
+		echo "Error: No product_id found in $$FILE"; \
+		exit 2; \
+	fi; \
+	echo "FILE=$$FILE"; \
+	echo "PRODS=$$PRODS"; \
+	$(BACKTEST_BIN) "$$FILE" "$$PRODS" 0.01 0.3 50 50000 1.0
+
+.PHONY: backtest_max
+backtest_max: $(BACKTEST_BIN)
+	@read FILE PRODS < <( \
+		for f in data/*.ndjson; do \
+			if [ ! -f "$$f" ]; then continue; fi; \
+			p=$$(tr -d '\\' < "$$f" | awk -F'"product_id":"' '/"product_id":"/{split($$2,a,"\""); print a[1]}' | sort -u | tr '\n' ',' | sed 's/,$$//'); \
+			n=$$(awk -F, 'NF{print NF}' <<<"$$p"); \
+			echo "$$n $$f $$p"; \
+		done | sort -nr | awk 'NR==1{print $$2, $$3}' ); \
+	if [ -z "$$FILE" ] || [ -z "$$PRODS" ]; then \
+		echo "Error: No products found in data/*.ndjson"; \
+		exit 2; \
+	fi; \
+	echo "FILE=$$FILE"; \
+	echo "PRODS=$$PRODS"; \
+	$(BACKTEST_BIN) "$$FILE" "$$PRODS" 0.01 0.3 50 50000 1.0
+
+.PHONY: prodlist_topN
+prodlist_topN:
+	@test -n "$(FILE)" || { echo "Error: Usage: make $@ FILE=data/your.ndjson [N=30] [QUOTES=USD,USDT,EUR,GBP] [MIN=200]"; exit 2; }; \
+	test -f "$(FILE)" || { echo "Error: FILE $(FILE) does not exist."; exit 2; }; \
+	N=$${N:-30}; \
+	QUOTES=$${QUOTES:-USD,USDT,EUR,GBP}; \
+	MIN=$${MIN:-200}; \
+	tr -d '\\' < "$(FILE)" \
+	| awk -v q=","$${QUOTES}"," 'BEGIN{FS="\"product_id\":\""} \
+		/"product_id":"/{ split($$2,a,"\""); pid=a[1]; split(pid,b,"-"); \
+			if (q==",ALL," || index(q,","b[2]",")>0) c[pid]++ } \
+		END{ for (p in c) if (c[p] >= MIN) print c[p],p }' \
+	| LC_ALL=C sort -nr \
+	| awk -v N=$$N 'NR<=N{print $$2}' \
+	| paste -sd, -
+
+.PHONY: backtest_topN
+backtest_topN: $(BACKTEST_BIN)
+	@test -n "$(FILE)" || { echo "Error: Usage: make $@ FILE=data/your.ndjson [N=30] [QTY=0.01] [THR=0.3] [HOLD=50] [CAP=50000] [LEV=1.0] [QUOTES=USD,USDT,EUR,GBP] [MIN=200]"; exit 2; }; \
+	test -f "$(FILE)" || { echo "Error: FILE $(FILE) does not exist."; exit 2; }; \
+	N=$${N:-30}; \
+	Q=$${QTY:-0.01}; \
+	T=$${THR:-0.3}; \
+	H=$${HOLD:-50}; \
+	C=$${CAP:-50000}; \
+	L=$${LEV:-1.0}; \
+	QUOTES=$${QUOTES:-USD,USDT,EUR,GBP}; \
+	MIN=$${MIN:-200}; \
+	PRODS=$$(tr -d '\\' < "$(FILE)" \
+		| awk -v q=","$$QUOTES"," 'BEGIN{FS="\"product_id\":\""} \
+			/"product_id":"/{ split($$2,a,"\""); pid=a[1]; split(pid,b,"-"); \
+				if (q==",ALL," || index(q,","b[2]",")>0) c[pid]++ } \
+			END{ for (p in c) if (c[p] >= MIN) print c[p],p }' \
+		| LC_ALL=C sort -nr \
+		| awk -v N=$$N 'NR<=N{print $$2}' \
+		| paste -sd, -); \
+	if [ -z "$$PRODS" ]; then \
+		echo "Error: No products passed filters"; \
+		exit 3; \
+	fi; \
+	echo "FILE=$(FILE)"; \
+	echo "PRODS=$$PRODS"; \
+	$(BACKTEST_BIN) "$(FILE)" "$$PRODS" $$Q $$T $$H $$C $$L
+
+.PHONY: backtest_topN_fast
+backtest_topN_fast: $(BACKTEST_BIN)
+	@test -n "$(FILE)" || { echo "Error: Usage: make $@ FILE=data/your.ndjson [N=30] [QTY=0.01] [THR=0.3] [HOLD=5] [CAP=50000] [LEV=1.0] [QUOTES=USD,USDT,EUR,GBP] [MIN=200]"; exit 2; }; \
+	test -f "$(FILE)" || { echo "Error: FILE $(FILE) does not exist."; exit 2; }; \
+	N=$${N:-30}; \
+	Q=$${QTY:-0.01}; \
+	T=$${THR:-0.3}; \
+	H=$${HOLD:-5}; \
+	C=$${CAP:-50000}; \
+	L=$${LEV:-1.0}; \
+	QUOTES=$${QUOTES:-USD,USDT,EUR,GBP}; \
+	MIN=$${MIN:-200}; \
+	PRODS=$$(tr -d '\\' < "$(FILE)" \
+		| awk -v q=","$$QUOTES"," 'BEGIN{FS="\"product_id\":\""} \
+			/"product_id":"/{ split($$2,a,"\""); pid=a[1]; split(pid,b,"-"); \
+				if (q==",ALL," || index(q,","b[2]",")>0) c[pid]++ } \
+			END{ for (p in c) if (c[p] >= MIN) print c[p],p }' \
+		| LC_ALL=C sort -nr \
+		| awk -v N=$$N 'NR<=N{print $$2}' \
+		| paste -sd, -); \
+	if [ -z "$$PRODS" ]; then \
+		echo "Error: No products passed filters"; \
+		exit 3; \
+	fi; \
+	echo "FILE=$(FILE)"; \
+	echo "PRODS=$$PRODS"; \
+	$(BACKTEST_BIN) "$(FILE)" "$$PRODS" $$Q $$T $$H $$C $$L
+
+.PHONY: record_and_backtest record_1s backtest_latest record_only
+record_and_backtest: $(STREAM_BIN) $(BACKTEST_BIN)
+	@command -v python3 >/dev/null 2>&1 || { echo "Error: python3 is required for this target."; exit 2; }; \
+	D=$${DURATION:-1}; \
+	echo "Recording for $$D seconds..."; \
+	python3 - "$$D" "$(STREAM_BIN)" <<'PY' || { echo "Error: Capture failed"; exit 2; } \
+import os, sys, time, signal, subprocess, time as t \
+D = int(float(sys.argv[1])); BIN = sys.argv[2] \
+p = subprocess.Popen([BIN], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid) \
+t.sleep(D) \
+for sig, wait_s in ((signal.SIGINT,1.0),(signal.SIGTERM,1.0),(signal.SIGKILL,0.0)): \
+    try: os.killpg(p.pid, sig) \
+    except ProcessLookupError: break \
+    try: \
+        p.wait(timeout=wait_s); break \
+    except subprocess.TimeoutExpired: \
+        continue \
+sys.exit(0) \
+PY
+	@F=$$(ls -t data/*.ndjson 2>/dev/null | head -n1); \
+	if [ -z "$$F" ]; then \
+		echo "Error: No data/*.ndjson created."; \
+		exit 2; \
+	fi; \
+	if [ -n "$(PRODS)" ]; then P="$(PRODS)"; else \
+		P=$$(tr -d '\\' < "$$F" | awk -F'"product_id":"' '/"product_id":"/{split($$2,a,"\""); print a[1]}' \
+			| sort -u | paste -sd, -); \
+	fi; \
+	if [ -z "$$P" ]; then \
+		echo "Error: No product IDs found in $$F"; \

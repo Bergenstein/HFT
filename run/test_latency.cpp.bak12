@@ -1,0 +1,75 @@
+// Quick latency test using existing recorded data
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <chrono>
+#include "../md/normalizer.hpp"
+#include "../md/order_book.hpp"
+#include "../core/latency_tracker.hpp"
+
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        std::cerr << "Usage: " << argv[0] << " <ndjson_file>\n";
+        return 1;
+    }
+
+    LatencyTracker parse_latency;
+    LatencyTracker book_latency;
+    LatencyTracker total_latency;
+    
+    Normalizer norm;
+    md::OrderBook book;
+    
+    std::ifstream ifs(argv[1]);
+    std::string line;
+    int line_count = 0;
+    
+    std::cout << "Processing " << argv[1] << "...\n";
+    std::cout << "Measuring: Parse time + Order book update time\n\n";
+    
+    while (std::getline(ifs, line) && line_count < 5000) {
+        if (line.empty()) continue;
+        line_count++;
+        
+        // Measure parsing
+        auto t0 = std::chrono::high_resolution_clock::now();
+        auto msgs = norm.parse(line);
+        auto t1 = std::chrono::high_resolution_clock::now();
+        
+        long long parse_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+        parse_latency.add_sample(parse_ns);
+        
+        // Measure order book updates
+        for (auto& m : msgs) {
+            auto t2 = std::chrono::high_resolution_clock::now();
+            book.on_message(m);
+            auto t3 = std::chrono::high_resolution_clock::now();
+            
+            long long book_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
+            book_latency.add_sample(book_ns);
+            
+            long long total_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t0).count();
+            total_latency.add_sample(total_ns);
+        }
+        
+        if (line_count % 1000 == 0) {
+            std::cout << "\n=== After " << line_count << " messages ===\n";
+            std::cout << "PARSE LATENCY: ";
+            parse_latency.print_stats();
+            std::cout << "BOOK UPDATE LATENCY: ";
+            book_latency.print_stats();
+            std::cout << "TOTAL PROCESSING: ";
+            total_latency.print_stats();
+        }
+    }
+    
+    std::cout << "\n=== FINAL STATS (" << line_count << " messages) ===\n";
+    std::cout << "PARSE: ";
+    parse_latency.print_stats();
+    std::cout << "BOOK:  ";
+    book_latency.print_stats();
+    std::cout << "TOTAL: ";
+    total_latency.print_stats();
+    
+    return 0;
+}

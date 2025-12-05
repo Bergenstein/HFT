@@ -1,0 +1,167 @@
+// storage/sqlite/market_data_store.hpp
+#pragma once
+#include "../../pipeline/normalized_data.hpp"
+#include <sqlite3.h>
+#include <string>
+#include <mutex>
+#include <memory>
+#include <chrono>
+
+namespace storage {
+
+class MarketDataStore {
+public:
+    explicit MarketDataStore(const std::string& db_path = "hft_market_data.db") {
+        int rc = sqlite3_open(db_path.c_str(), &db_);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("Failed to open database: " + std::string(sqlite3_errmsg(db_)));
+        }
+        
+        // Performance optimizations
+        exec("PRAGMA journal_mode = WAL");  // Write-Ahead Logging
+        exec("PRAGMA synchronous = NORMAL");  // Faster writes
+        exec("PRAGMA cache_size = -64000");  // 64MB cache
+        exec("PRAGMA temp_store = MEMORY");
+        
+        create_tables();
+        prepare_statements();
+        
+        std::cout << "[STORAGE] Opened database: " << db_path << "\n";
+    }
+    
+    ~MarketDataStore() {
+        finalize_statements();
+        if (db_) sqlite3_close(db_);
+    }
+    
+    // Insert quote (fast path - prepared statement)
+    bool insert_quote(const pipeline::NormalizedQuote& quote) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        
+        int64_t ts = std::chrono::duration_cast<std::chrono::microseconds>(
+            quote.local_timestamp.time_since_epoch()).count();
+        
+        sqlite3_reset(stmt_insert_quote_);
+        sqlite3_bind_text(stmt_insert_quote_, 1, quote.exchange.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt_insert_quote_, 2, quote.product_id.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt_insert_quote_, 3, ts);
+        sqlite3_bind_double(stmt_insert_quote_, 4, quote.best_bid);
+        sqlite3_bind_double(stmt_insert_quote_, 5, quote.best_ask);
+        sqlite3_bind_double(stmt_insert_quote_, 6, quote.bid_size);
+        sqlite3_bind_double(stmt_insert_quote_, 7, quote.ask_size);
+        sqlite3_bind_int64(stmt_insert_quote_, 8, quote.sequence);
+        sqlite3_bind_int64(stmt_insert_quote_, 9, quote.latency_us());
+        
+        int rc = sqlite3_step(stmt_insert_quote_);
+        return rc == SQLITE_DONE;
+    }
+    
+    // Batch insert (for bulk loading)
+    void begin_transaction() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        exec("BEGIN TRANSACTION");
+    }
+    
+    void commit_transaction() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        exec("COMMIT");
+    }
+    
+    // Query latest quote
+    struct LatestQuote {
+        double bid, ask;
+        int64_t timestamp;
+        bool found;
+    };
+    
+    LatestQuote get_latest_quote(const std::string& exchange, const std::string& product) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        
+        std::string sql = "SELECT best_bid, best_ask, timestamp FROM quotes "
+                         "WHERE exchange = ? AND product_id = ? "
+                         "ORDER BY timestamp DESC LIMIT 1";
+        
+        sqlite3_stmt* stmt;
+        sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr);
+        sqlite3_bind_text(stmt, 1, exchange.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, product.c_str(), -1, SQLITE_TRANSIENT);
+        
+        LatestQuote result{0, 0, 0, false};
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            result.bid = sqlite3_column_double(stmt, 0);
+            result.ask = sqlite3_column_double(stmt, 1);
+            result.timestamp = sqlite3_column_int64(stmt, 2);
+            result.found = true;
+        }
+        
+        sqlite3_finalize(stmt);
+        return result;
+    }
+    
+    // Get total rows
+    int64_t get_quote_count() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        
+        sqlite3_stmt* stmt;
+        sqlite3_prepare_v2(db_, "SELECT COUNT(*) FROM quotes", -1, &stmt, nullptr);
+        
+        int64_t count = 0;
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            count = sqlite3_column_int64(stmt, 0);
+        }
+        
+        sqlite3_finalize(stmt);
+        return count;
+    }
+
+private:
+    void create_tables() {
+        // Read schema from file or inline
+        const char* schema = R"SQL(
+CREATE TABLE IF NOT EXISTS quotes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    exchange TEXT NOT NULL,
+    product_id TEXT NOT NULL,
+    timestamp INTEGER NOT NULL,
+    best_bid REAL NOT NULL,
+    best_ask REAL NOT NULL,
+    bid_size REAL NOT NULL,
+    ask_size REAL NOT NULL,
+    sequence INTEGER,
+    latency_us INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_quotes_exchange_product_time ON quotes(exchange, product_id, timestamp);
+        )SQL";
+        
+        exec(schema);
+    }
+    
+    void prepare_statements() {
+        const char* sql_insert_quote = 
+            "INSERT INTO quotes (exchange, product_id, timestamp, best_bid, best_ask, "
+            "bid_size, ask_size, sequence, latency_us) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        
+        sqlite3_prepare_v2(db_, sql_insert_quote, -1, &stmt_insert_quote_, nullptr);
+    }
+    
+    void finalize_statements() {
+        if (stmt_insert_quote_) sqlite3_finalize(stmt_insert_quote_);
+    }
+    
+    void exec(const char* sql) {
+        char* err_msg = nullptr;
+        int rc = sqlite3_exec(db_, sql, nullptr, nullptr, &err_msg);
+        if (rc != SQLITE_OK) {
+            std::string error = err_msg ? err_msg : "Unknown error";
+            sqlite3_free(err_msg);
+            throw std::runtime_error("SQL error: " + error);
+        }
+    }
+    
+    sqlite3* db_;
+    sqlite3_stmt* stmt_insert_quote_;
+    std::mutex mutex_;
+};
+
+} // namespace storage

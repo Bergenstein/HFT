@@ -1,0 +1,76 @@
+# =============================================================================
+# docker-compose.yml - HFT System Orchestration
+# =============================================================================
+# Orchestrates the full HFT system with multiple services
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # ===========================================================================
+  # Market Data Collector - Streams L2 data from exchanges
+  # ===========================================================================
+  market-data:
+    build:
+      context: .
+      target: production
+    container_name: hft-market-data
+    command: ["stream_and_record"]
+    environment:
+      - COINBASE_API_KEY=${COINBASE_API_KEY}
+      - COINBASE_API_SECRET=${COINBASE_API_SECRET}
+      - BINANCE_API_KEY=${BINANCE_API_KEY}
+      - BINANCE_API_SECRET=${BINANCE_API_SECRET}
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config:ro
+    networks:
+      - hft-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+  # ===========================================================================
+  # Backtester - Run strategy backtests
+  # ===========================================================================
+  backtester:
+    build:
+      context: .
+      target: production
+    container_name: hft-backtester
+    command: ["backtest_from_sqlite", "/app/data/market_data.db", "BTC-USDT"]
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config:ro
+    networks:
+      - hft-network
+    profiles:
+      - backtest
+
+  # ===========================================================================
+  # Development Environment
+  # ===========================================================================
+  dev:
+    build:
+      context: .
+      target: development
+    container_name: hft-dev
+    stdin_open: true
+    tty: true
+    volumes:
+      - .:/app
+      - ./data:/app/data
+    networks:
+      - hft-network
+    profiles:
+      - dev
+
+networks:
+  hft-network:
+    driver: bridge
+
+volumes:
+  hft-data:

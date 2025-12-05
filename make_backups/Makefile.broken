@@ -1,0 +1,72 @@
+# Main sources
+STREAM_MAIN    := run/stream_and_record.cpp
+STREAM_LATENCY := run/stream_with_latency.cpp
+REPLAY_MAIN    := run/replay_and_book.cpp
+BACKTEST_MAIN  := run/backtest_strategy.cpp
+SCAN_MAIN      := run/scan_recording.cpp
+MULTI_ARB_MAIN := run/multi_exchange_arbitrage.cpp
+
+# Output binaries
+STREAM_BIN     := $(BUILDDIR)/stream_and_record
+STREAM_LAT_BIN := $(BUILDDIR)/stream_with_latency
+REPLAY_BIN     := $(BUILDDIR)/replay_and_book
+BACKTEST_BIN   := $(BUILDDIR)/backtest_strategy
+SCAN_BIN       := $(BUILDDIR)/scan_recording
+MULTI_ARB_BIN  := $(BUILDDIR)/multi_exchange_arbitrage
+
+ALL_BINS := $(STREAM_BIN) $(REPLAY_BIN) $(BACKTEST_BIN) $(SCAN_BIN) $(MULTI_ARB_BIN)
+
+# Build targets
+.PHONY: all stream stream_latency replay backtest scan multi_exchange_arb clean help
+all: $(ALL_BINS)
+
+stream:   $(STREAM_BIN)
+stream_latency: $(STREAM_LAT_BIN)
+replay:   $(REPLAY_BIN)
+backtest: $(BACKTEST_BIN)
+scan:     $(SCAN_BIN)
+multi_exchange_arb: $(MULTI_ARB_BIN)
+
+# Link binaries
+$(STREAM_BIN): $(DISCOVERY_OBJ) $(STREAM_OBJ)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(STREAM_LAT_BIN): $(DISCOVERY_OBJ) $(BUILDDIR)/run/stream_with_latency.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(REPLAY_BIN): $(DISCOVERY_OBJ) $(REPLAY_OBJ)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(MULTI_ARB_BIN): $(BUILDDIR)/run/multi_exchange_arbitrage.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) -lwebsocketpp -lboost_system -lssl -lcrypto -lpthread
+
+# Production Multi-Exchange Pipeline
+PROD_MULTI_EXCHANGE := run/production_multi_exchange.cpp
+PROD_MULTI_BIN := $(BUILDDIR)/production_multi_exchange
+
+.PHONY: production_pipeline prod_multi
+production_pipeline prod_multi: $(PROD_MULTI_BIN)
+
+$(PROD_MULTI_BIN): $(PROD_MULTI_EXCHANGE)
+	@mkdir -p $(BUILDDIR)
+	$(CXX) -std=c++20 -O2 -pthread $(INCLUDES) -o $@ $< $(LIBS) -lsqlite3 -lzmq -lprotobuf
+	@echo "✓ Built production multi-exchange pipeline (Coinbase + Binance + Kraken)"
+
+.PHONY: run_prod_pipeline
+run_prod_pipeline: $(PROD_MULTI_BIN)
+	@echo "Running production multi-exchange pipeline..."
+	@./$(PROD_MULTI_BIN)
+
+# Help text
+help:
+	@echo "Build targets:"
+	@echo "  make all                      - Build all binaries"
+	@echo "  make stream                   - Build stream_and_record"
+	@echo "  make stream_latency           - Build stream_with_latency (with latency tracking)"
+	@echo "  make replay                   - Build replay_and_book"
+	@echo "  make backtest                 - Build backtest_strategy"
+	@echo "  make scan                     - Build scan_recording"
+	@echo "  make multi_exchange_arb       - Build multi-exchange arbitrage engine"
+	@echo ""
+	@echo "Run targets:"
+	@echo "  make run_arbitrage            - Run multi-exchange arbitrage scanner"

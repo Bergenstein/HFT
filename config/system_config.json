@@ -1,0 +1,130 @@
+{
+  "system": {
+    "mode": "demo",
+    "logging_level": "INFO",
+    "enable_cpu_pinning": false,
+    "num_worker_threads": 4,
+    "data_directory": "./data"
+  },
+  "cpu_pinning": {
+    "enabled": false,
+    "market_data_core": 0,
+    "strategy_core": 1,
+    "order_execution_core": 2,
+    "logging_core": 3,
+    "reserve_cores_for_os": true
+  },
+  "exchanges": {
+    "coinbase": {
+      "enabled": true,
+      "ws_url": "wss://advanced-trade-ws.coinbase.com",
+      "rest_url": "https://api.coinbase.com/api/v3/brokerage",
+      "api_key": "${COINBASE_API_KEY}",
+      "api_secret": "${COINBASE_API_SECRET}",
+      "passphrase": "${COINBASE_PASSPHRASE}",
+      "sandbox": false,
+      "maker_fee_bps": 40,
+      "taker_fee_bps": 60,
+      "rate_limit_per_sec": 10,
+      "products": ["BTC-USD", "ETH-USD", "SOL-USD", "AVAX-USD", "MATIC-USD", "LINK-USD"]
+    },
+    "binance": {
+      "enabled": false,
+      "ws_url": "wss://stream.binance.com:9443/ws",
+      "rest_url": "https://api.binance.com",
+      "api_key": "${BINANCE_API_KEY}",
+      "api_secret": "${BINANCE_API_SECRET}",
+      "sandbox": false,
+      "maker_fee_bps": 10,
+      "taker_fee_bps": 10,
+      "rate_limit_per_sec": 20,
+      "products": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AVAXUSDT", "MATICUSDT", "BNBUSDT"]
+    },
+    "kraken": {
+      "enabled": false,
+      "ws_url": "wss://ws.kraken.com",
+      "rest_url": "https://api.kraken.com",
+      "api_key": "${KRAKEN_API_KEY}",
+      "api_secret": "${KRAKEN_API_SECRET}",
+      "sandbox": false,
+      "maker_fee_bps": 16,
+      "taker_fee_bps": 26,
+      "rate_limit_per_sec": 15,
+      "products": ["XBT/USD", "ETH/USD", "SOL/USD"]
+    },
+    "okx": {
+      "enabled": false,
+      "ws_url": "wss://ws.okx.com:8443/ws/v5/public",
+      "rest_url": "https://www.okx.com",
+      "api_key": "${OKX_API_KEY}",
+      "api_secret": "${OKX_API_SECRET}",
+      "passphrase": "${OKX_PASSPHRASE}",
+      "sandbox": false,
+      "maker_fee_bps": 8,
+      "taker_fee_bps": 10,
+      "rate_limit_per_sec": 20,
+      "products": ["BTC-USDT", "ETH-USDT", "SOL-USDT"]
+    },
+    "bybit": {
+      "enabled": false,
+      "ws_url": "wss://stream.bybit.com/v5/public/spot",
+      "rest_url": "https://api.bybit.com",
+      "api_key": "${BYBIT_API_KEY}",
+      "api_secret": "${BYBIT_API_SECRET}",
+      "sandbox": false,
+      "maker_fee_bps": 10,
+      "taker_fee_bps": 10,
+      "rate_limit_per_sec": 50,
+      "products": ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    }
+  },
+  "storage": {
+    "sqlite": {
+      "enabled": true,
+      "database_path": "./market_data.db",
+      "batch_size": 100,
+      "flush_interval_ms": 1000
+    },
+    "in_memory_cache": {
+      "enabled": true,
+      "max_quotes_per_product": 1000,
+      "max_trades_per_product": 5000
+    }
+  },
+  "zeromq": {
+    "enabled": true,
+    "publisher_endpoint": "tcp://*:5555",
+    "subscriber_timeout_ms": 100
+  },
+  "strategies": {
+    "imbalance": {
+      "enabled": false,
+      "threshold": 0.3,
+      "position_size": 0.01,
+      "max_position": 1.0
+    },
+    "spread_reversion": {
+      "enabled": false,
+      "window": 100,
+      "z_threshold": 2.0,
+      "position_size": 0.01
+    },
+    "arbitrage": {
+      "enabled": false,
+      "min_spread_bps": 10,
+      "max_position_usd": 10000
+    }
+  },
+  "risk_management": {
+    "max_daily_loss_usd": 1000,
+    "max_position_per_product_usd": 10000,
+    "max_total_position_usd": 50000,
+    "stop_loss_percent": 2.0
+  },
+  "backtesting": {
+    "initial_capital": 50000,
+    "data_source": "sqlite",
+    "commission_bps": 10,
+    "slippage_bps": 5
+  }
+}

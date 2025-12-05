@@ -1,0 +1,254 @@
+SHELL := /bin/bash
+CXX       ?= c++
+CXXFLAGS  := -std=c++20 -Wall -Wextra -O2 -pthread
+
+# Define library prefixes with fallback paths
+OPENSSL_PREFIX := $(shell brew --prefix openssl@3 2>/dev/null || echo /opt/homebrew/opt/openssl@3)
+BOOST_PREFIX   := $(shell brew --prefix boost 2>/dev/null || echo /opt/homebrew/opt/boost)
+JSON_PREFIX    := $(shell brew --prefix nlohmann-json 2>/dev/null || echo /opt/homebrew/opt/nlohmann-json)
+
+# Check if libraries exist
+ifeq (,$(wildcard $(OPENSSL_PREFIX)/lib/libssl.a))
+    $(error OpenSSL not found at $(OPENSSL_PREFIX))
+endif
+ifeq (,$(wildcard $(BOOST_PREFIX)/include/boost))
+    $(error Boost not found at $(BOOST_PREFIX))
+endif
+ifeq (,$(wildcard $(JSON_PREFIX)/include/nlohmann))
+    $(error nlohmann-json not found at $(JSON_PREFIX))
+endif
+
+INCLUDES := -I. -I$(BOOST_PREFIX)/include -I$(OPENSSL_PREFIX)/include -I$(JSON_PREFIX)/include
+LIBS     := -L$(OPENSSL_PREFIX)/lib -lssl -lcrypto -lpthread
+
+BUILDDIR := build
+SRCDIRS  := discovery md net io core bt
+
+COMMON_SRCS := $(foreach d,$(SRCDIRS),$(wildcard $(d)/*.cpp))
+COMMON_OBJS := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(COMMON_SRCS))
+
+# Main programs
+STREAM_MAIN    := run/stream_and_record.cpp
+REPLAY_MAIN    := run/replay_and_book.cpp
+BACKTEST_MAIN  := run/backtest_strategy.cpp
+SCAN_MAIN      := run/scan_recording.cpp
+
+STREAM_OBJ     := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(STREAM_MAIN))
+REPLAY_OBJ     := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(REPLAY_MAIN))
+BACKTEST_OBJ   := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(BACKTEST_MAIN))
+SCAN_OBJ       := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(SCAN_MAIN))
+
+STREAM_BIN     := $(BUILDDIR)/stream_and_record
+REPLAY_BIN     := $(BUILDDIR)/replay_and_book
+BACKTEST_BIN   := $(BUILDDIR)/backtest_strategy
+SCAN_BIN       := $(BUILDDIR)/scan_recording
+
+# Results directory
+RESULTS_DIR    := test_results_$(shell date +%Y%m%d_%H%M%S)
+
+.PHONY: all clean
+all: $(STREAM_BIN) $(REPLAY_BIN) $(BACKTEST_BIN) $(SCAN_BIN)
+
+$(BUILDDIR)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+$(STREAM_BIN): $(COMMON_OBJS) $(STREAM_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
+
+$(REPLAY_BIN): $(COMMON_OBJS) $(REPLAY_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
+
+$(BACKTEST_BIN): $(COMMON_OBJS) $(BACKTEST_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
+
+$(SCAN_BIN): $(SCAN_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+# Individual build targets
+.PHONY: stream replay backtest scan
+stream:   $(STREAM_BIN)
+replay:   $(REPLAY_BIN)
+backtest: $(BACKTEST_BIN)
+scan:     $(SCAN_BIN)
+
+# ==========================================
+# AUTOMATED STRATEGY TESTING
+# ==========================================
+
+# Find latest data file and most active product
+LATEST_DATA = $(shell ls -t data/*.ndjson 2>/dev/null | head -n1)
+ACTIVE_PROD = $(shell if [ -f "$(LATEST_DATA)" ]; then ./$(SCAN_BIN) "$(LATEST_DATA)" 2>/dev/null | grep -A1 "Top products" | tail -1 | awk '{print $$1}'; fi)
+
+# Test parameters
+QTY := 1.0
+CAP := 50000
+
+# Helper function to run backtest
+define run_backtest
+	@echo "Testing $(1) with params: $(2), $(3)"
+	@mkdir -p $(RESULTS_DIR)
+	@$(BACKTEST_BIN) "$(LATEST_DATA)" "$(1)" "$(ACTIVE_PROD)" "$(QTY)" "$(2)" "$(3)" "$(CAP)" > $(RESULTS_DIR)/$(1)_p1_$(2)_p2_$(3).txt 2>&1 || true
+	@grep -A5 "=== Results" $(RESULTS_DIR)/$(1)_p1_$(2)_p2_$(3).txt | head -10 || echo "  No results"
+endef
+
+# Test individual strategies
+.PHONY: test_imbalance test_ofi test_microprice test_quote_intensity test_spread_reversion test_vpin test_vw_spread
+
+test_imbalance: $(BACKTEST_BIN)
+	@echo "========================================="
+	@echo "Testing Imbalance Strategy"
+	@echo "========================================="
+	$(call run_backtest,imbalance,0.3,5.0)
+	$(call run_backtest,imbalance,0.5,5.0)
+	$(call run_backtest,imbalance,0.7,5.0)
+	$(call run_backtest,imbalance,0.9,5.0)
+
+test_ofi: $(BACKTEST_BIN)
+	@echo "========================================="
+	@echo "Testing OFI Strategy"
+	@echo "========================================="
+	$(call run_backtest,ofi,0.10,0.05)
+	$(call run_backtest,ofi,0.15,0.07)
+	$(call run_backtest,ofi,0.20,0.10)
+
+test_microprice: $(BACKTEST_BIN)
+	@echo "========================================="
+	@echo "Testing Microprice Strategy"
+	@echo "========================================="
+	$(call run_backtest,microprice,0.0005,5.0)
+	$(call run_backtest,microprice,0.001,5.0)
+	$(call run_backtest,microprice,0.002,5.0)
+
+test_quote_intensity: $(BACKTEST_BIN)
+	@echo "========================================="
+	@echo "Testing Quote Intensity Strategy"
+	@echo "========================================="
+	$(call run_backtest,quote_intensity,0.3,3.0)
+	$(call run_backtest,quote_intensity,0.4,3.0)
+	$(call run_backtest,quote_intensity,0.5,3.0)
+
+test_spread_reversion: $(BACKTEST_BIN)
+	@echo "========================================="
+	@echo "Testing Spread Reversion Strategy"
+	@echo "========================================="
+	$(call run_backtest,spread_reversion,1.3,5.0)
+	$(call run_backtest,spread_reversion,1.5,5.0)
+	$(call run_backtest,spread_reversion,2.0,5.0)
+
+test_vpin: $(BACKTEST_BIN)
+	@echo "========================================="
+	@echo "Testing VPIN Strategy"
+	@echo "========================================="
+	$(call run_backtest,vpin,0.2,5.0)
+	$(call run_backtest,vpin,0.3,5.0)
+	$(call run_backtest,vpin,0.4,5.0)
+
+test_vw_spread: $(BACKTEST_BIN)
+	@echo "========================================="
+	@echo "Testing Volume Weighted Spread Strategy"
+	@echo "========================================="
+	$(call run_backtest,vw_spread,0.001,4.0)
+	$(call run_backtest,vw_spread,0.002,4.0)
+	$(call run_backtest,vw_spread,0.003,4.0)
+
+# Test all strategies
+.PHONY: test_all_strategies
+test_all_strategies: $(BACKTEST_BIN) $(SCAN_BIN)
+	@if [ -z "$(LATEST_DATA)" ]; then \
+		echo "Error: No data files found in data/"; \
+		echo "Run 'make stream' first to collect data."; \
+		exit 1; \
+	fi
+	@echo "=========================================="
+	@echo "  AUTOMATED STRATEGY TEST SUITE"
+	@echo "=========================================="
+	@echo "Data: $(LATEST_DATA)"
+	@echo "Product: $(ACTIVE_PROD)"
+	@echo "Results will be saved to: $(RESULTS_DIR)"
+	@echo ""
+	@$(MAKE) test_imbalance RESULTS_DIR=$(RESULTS_DIR)
+	@$(MAKE) test_ofi RESULTS_DIR=$(RESULTS_DIR)
+	@$(MAKE) test_microprice RESULTS_DIR=$(RESULTS_DIR)
+	@$(MAKE) test_quote_intensity RESULTS_DIR=$(RESULTS_DIR)
+	@$(MAKE) test_spread_reversion RESULTS_DIR=$(RESULTS_DIR)
+	@$(MAKE) test_vpin RESULTS_DIR=$(RESULTS_DIR)
+	@$(MAKE) test_vw_spread RESULTS_DIR=$(RESULTS_DIR)
+	@echo ""
+	@echo "=========================================="
+	@echo "  TEST SUITE COMPLETE!"
+	@echo "=========================================="
+	@echo ""
+	@$(MAKE) generate_report RESULTS_DIR=$(RESULTS_DIR)
+
+# Generate summary report
+.PHONY: generate_report
+generate_report:
+	@echo "Generating summary report..."
+	@echo "# Strategy Test Results" > $(RESULTS_DIR)/SUMMARY.md
+	@echo "" >> $(RESULTS_DIR)/SUMMARY.md
+	@echo "**Date:** $$(date)" >> $(RESULTS_DIR)/SUMMARY.md
+	@echo "**Data:** $(LATEST_DATA)" >> $(RESULTS_DIR)/SUMMARY.md
+	@echo "**Product:** $(ACTIVE_PROD)" >> $(RESULTS_DIR)/SUMMARY.md
+	@echo "" >> $(RESULTS_DIR)/SUMMARY.md
+	@echo "## Results" >> $(RESULTS_DIR)/SUMMARY.md
+	@echo "" >> $(RESULTS_DIR)/SUMMARY.md
+	@echo "| Strategy | Params | Trades | Return | Sharpe | Max DD | PnL |" >> $(RESULTS_DIR)/SUMMARY.md
+	@echo "|----------|--------|--------|--------|--------|--------|-----|" >> $(RESULTS_DIR)/SUMMARY.md
+	@for f in $(RESULTS_DIR)/*.txt; do \
+		if [ -f "$$f" ]; then \
+			name=$$(basename "$$f" .txt); \
+			trades=$$(grep "^Trades" "$$f" | awk '{print $$3}' || echo "0"); \
+			ret=$$(grep "^Total Return" "$$f" | awk '{print $$4}' || echo "N/A"); \
+			sharpe=$$(grep "^Sharpe (annualized)" "$$f" | awk '{print $$4}' || echo "N/A"); \
+			dd=$$(grep "^Max Drawdown" "$$f" | awk '{print $$4}' || echo "N/A"); \
+			pnl=$$(grep "^Net PnL" "$$f" | awk '{print $$4}' || echo "N/A"); \
+			echo "| $$name | - | $$trades | $$ret | $$sharpe | $$dd | $$pnl |" >> $(RESULTS_DIR)/SUMMARY.md; \
+		fi; \
+	done
+	@echo "" >> $(RESULTS_DIR)/SUMMARY.md
+	@echo "Results saved to: $(RESULTS_DIR)/SUMMARY.md"
+	@cat $(RESULTS_DIR)/SUMMARY.md
+
+# Quick test with latest data
+.PHONY: quick_test
+quick_test: $(BACKTEST_BIN) $(SCAN_BIN)
+	@if [ -z "$(LATEST_DATA)" ]; then \
+		echo "Error: No data files found"; \
+		exit 1; \
+	fi
+	@echo "Quick test on $(ACTIVE_PROD)..."
+	@$(BACKTEST_BIN) "$(LATEST_DATA)" "imbalance" "$(ACTIVE_PROD)" "1.0" "0.6" "5.0" "50000"
+
+# Clean
+clean:
+	rm -rf $(BUILDDIR) test_results_*
+
+.PHONY: help
+help:
+	@echo "Coin_base_HFT Makefile"
+	@echo ""
+	@echo "Build targets:"
+	@echo "  make all                  - Build all binaries"
+	@echo "  make stream               - Build stream_and_record"
+	@echo "  make replay               - Build replay_and_book"
+	@echo "  make backtest             - Build backtest_strategy"
+	@echo "  make scan                 - Build scan_recording"
+	@echo ""
+	@echo "Testing targets:"
+	@echo "  make test_all_strategies  - Test all strategies with parameter sweeps"
+	@echo "  make test_imbalance       - Test imbalance strategy only"
+	@echo "  make test_ofi             - Test OFI strategy only"
+	@echo "  make test_microprice      - Test microprice strategy only"
+	@echo "  make test_quote_intensity - Test quote intensity strategy"
+	@echo "  make test_spread_reversion- Test spread reversion strategy"
+	@echo "  make test_vpin            - Test VPIN strategy"
+	@echo "  make test_vw_spread       - Test volume-weighted spread strategy"
+	@echo "  make quick_test           - Quick test with default parameters"
+	@echo ""
+	@echo "  make clean                - Remove build artifacts"
+	@echo "  make help                 - Show this help"

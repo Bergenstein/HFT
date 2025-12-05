@@ -1,0 +1,121 @@
+=== COINBASE HFT SYSTEM - TESTING GUIDE ===
+
+All 6 binaries built successfully:
+  ✅ stream_and_record      (1.1M)  - Live data collection
+  ✅ scan_recording         (178K)  - Data analysis
+  ✅ replay_and_book        (794K)  - Order book replay
+  ✅ backtest_strategy      (845K)  - Strategy backtesting
+  ✅ complete_latency_test  (180K)  - Latency measurement
+  ✅ test_zmq_pubsub        (230K)  - ZeroMQ pub/sub test
+
+---
+HOW TO TEST EACH COMPONENT:
+---
+
+1. SCAN DATA FILE
+   Command: ./build/scan_recording <data_file.ndjson>
+   Example: ./build/scan_recording data/raw_20251107_194636_ws0.ndjson
+   
+   Output: Shows all products and update counts in the file
+
+2. REPLAY ORDER BOOK
+   Command: ./build/replay_and_book <data_file.ndjson> <PRODUCT-ID>
+   Example: ./build/replay_and_book data/raw_20251107_194636_ws0.ndjson LTC-EUR
+   
+   Output: Prints best bid/ask as book updates
+
+3. MEASURE LATENCY
+   Command: ./build/complete_latency_test <data_file.ndjson> <PRODUCT-ID>
+   Example: ./build/complete_latency_test data/raw_20251107_194636_ws0.ndjson LTC-EUR
+   
+   Output: 
+   - Parse latency: ~13.85μs average (JSON parsing)
+   - Book update: ~0.03μs average (order book maintenance)
+   - Total: ~13.93μs average end-to-end
+   
+   YOUR SYSTEM PROCESSES EACH MESSAGE IN 14 MICROSECONDS!
+
+4. BACKTEST STRATEGY
+   Command: ./build/backtest_strategy <data_file.ndjson> <strategy> <PRODUCT> <qty> <param1> <param2> <capital>
+   Example: ./build/backtest_strategy data/raw_20251107_194636_ws0.ndjson imbalance LTC-EUR 0.1 0.6 5 10000
+   
+   Available strategies:
+   - imbalance          (params: threshold, hold_seconds)
+   - ofi                (params: decay, threshold)
+   - microprice         (params: threshold, hold_seconds)
+   - quote_intensity    (params: window, threshold)
+   - spread_reversion   (params: threshold_mult, hold_seconds)
+   - vpin               (params: num_buckets, threshold)
+   - vw_spread          (params: threshold, hold_seconds)
+   
+   Output: Full P&L report with Sharpe ratio, drawdown, fees, etc.
+
+5. COLLECT LIVE DATA
+   Command: ./build/stream_and_record
+   
+   Output: Creates data/raw_<timestamp>_ws0.ndjson files
+   Press Ctrl+C to stop
+
+6. TEST ZEROMQ PUB/SUB (Advanced)
+   Command: ./build/test_zmq_pubsub
+   
+   Output: Demonstrates distributed messaging between components
+   Tests Protocol Buffer serialization over ZeroMQ
+
+---
+QUICK TEST SUITE:
+---
+
+# Test everything at once:
+make clean && make all
+./build/scan_recording data/raw_20251107_194636_ws0.ndjson
+./build/complete_latency_test data/raw_20251107_194636_ws0.ndjson LTC-EUR
+./build/backtest_strategy data/raw_20251107_194636_ws0.ndjson imbalance LTC-EUR 0.1 0.6 5 10000
+
+---
+YOUR MEASURED PERFORMANCE:
+---
+
+Processing Latency (per message):
+  Parse (JSON):       13.85μs average
+  Book Update:         0.03μs average
+  Total End-to-End:   13.93μs average
+  
+This means you can process ~71,700 messages per second!
+
+Network latency (Coinbase WebSocket): 10-50ms
+Your processing: 0.014ms (14μs)
+You are 700-3500x faster than network!
+
+---
+DATA FILES AVAILABLE:
+---
+
+data/raw_20251107_194636_ws0.ndjson (4.9MB, 2712 lines)
+  Top products: LTC-EUR, EDGE-USD, DASH-USD, SPX-USD
+  
+data/raw_20251107_194636_ws1.ndjson (3.8MB)
+data/raw_20251107_194636_ws2.ndjson (2.3MB)
+
+---
+BUILD COMMANDS:
+---
+
+make all              # Build all main binaries
+make clean            # Remove build files
+make stream           # Build stream_and_record only
+make replay           # Build replay_and_book only
+make scan             # Build scan_recording only
+make backtest         # Build backtest_strategy only
+
+make -f Makefile.zmq  # Build ZeroMQ test
+
+---
+NEXT STEPS:
+---
+
+1. Collect longer data: Run stream_and_record for hours
+2. Test all 7 strategies on multiple products
+3. Find profitable parameters (Sharpe > 2.0)
+4. Implement real-time trading with ZeroMQ architecture
+

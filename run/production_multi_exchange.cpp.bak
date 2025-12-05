@@ -1,0 +1,380 @@
+// run/production_multi_exchange.cpp - REAL Multi-Exchange Production Pipeline
+// STEP 5: Multi-Exchange → Normalizer → Lock-Free Queue → In-Memory Cache + SQLite
+//
+// Flow: Coinbase/Binance/Kraken WS → Parse JSON → Normalize → MPMC Queue
+//                                                            → Consumer Thread → In-Memory Cache
+//                                                                             → SQLite Batch Insert
+
+#include "../md/ws_l2_client.hpp"
+#include "../md/normalizer.hpp"
+#include "../pipeline/mpmc_queue.hpp"
+#include "../pipeline/normalized_data.hpp"
+#include "../storage/sqlite/market_data_store.hpp"
+#include "../storage/inmem/latest_quotes.hpp"
+#include "../core/cpu_affinity.hpp"
+#include <thread>
+#include <atomic>
+#include <iostream>
+#include <csignal>
+#include <boost/beast/core.hpp>
+#include <boost/beast/websocket.hpp>
+#include <boost/beast/ssl.hpp>
+#include <boost/asio/connect.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/ssl.hpp>
+#include <nlohmann/json.hpp>
+
+namespace beast = boost::beast;
+namespace websocket = beast::websocket;
+namespace net = boost::asio;
+namespace ssl = net::ssl;
+using tcp = net::ip::tcp;
+using json = nlohmann::json;
+
+using namespace pipeline;
+using namespace storage;
+
+// Global state
+std::atomic<bool> g_running{true};
+std::atomic<uint64_t> g_quotes_received{0};
+std::atomic<uint64_t> g_quotes_cached{0};
+std::atomic<uint64_t> g_quotes_persisted{0};
+
+// Lock-free MPMC queue for multi-producer (multiple exchanges) → single consumer
+MPMCQueue<NormalizedQuote> g_quote_queue(1048576);  // 1M capacity
+
+// Storage layers
+LatestQuotesCache g_inmem_cache;
+MarketDataStore* g_sqlite_store = nullptr;
+
+void signal_handler(int) {
+    std::cout << "\n[MAIN] Shutdown signal received\n";
+    g_running = false;
+}
+
+// Consumer thread: Dequeues normalized quotes → Updates cache + persists to SQLite
+void quote_consumer_thread() {
+    std::cout << "[CONSUMER] Started (Thread ID: " << std::this_thread::get_id() << ")\n";
+    
+    // Pin to CPU core 2 for deterministic latency
+    if (core::pin_thread_to_core(2)) {
+        std::cout << "[CONSUMER] Pinned to CPU core 2\n";
+    }
+    
+    NormalizedQuote quote;
+    int batch_count = 0;
+    const int BATCH_SIZE = 1000;
+    
+    g_sqlite_store->begin_transaction();
+    
+    while (g_running) {
+        if (g_quote_queue.try_pop(quote)) {
+            // Step 1: Update in-memory cache (latest quotes only - O(1) lookup)
+            g_inmem_cache.update(quote.exchange, quote.product_id, quote);
+            g_quotes_cached++;
+            
+            // Step 2: Persist to SQLite (batched for performance)
+            if (g_sqlite_store->insert_quote(quote)) {
+                g_quotes_persisted++;
+                batch_count++;
+                
+                // Commit every BATCH_SIZE inserts
+                if (batch_count >= BATCH_SIZE) {
+                    g_sqlite_store->commit_transaction();
+                    g_sqlite_store->begin_transaction();
+                    batch_count = 0;
+                }
+            }
+            
+            g_quotes_received++;
+        } else {
+            // Queue empty - yield to avoid busy spin
+            std::this_thread::yield();
+        }
+    }
+    
+    // Final commit
+    g_sqlite_store->commit_transaction();
+    std::cout << "[CONSUMER] Stopped\n";
+}
+
+// Modified WsL2Client wrapper that pushes to queue instead of file
+class CoinbaseFeedThread {
+public:
+    CoinbaseFeedThread(const std::vector<std::string>& products)
+        : products_(products), running_(false) {}
+    
+    void start() {
+        running_ = true;
+        thread_ = std::thread([this]() {
+            std::cout << "[COINBASE] Starting WebSocket feed...\n";
+            
+            try {
+                const std::string host = "advanced-trade-ws.coinbase.com";
+                const std::string port = "443";
+                
+                net::io_context ioc;
+                ssl::context ctx{ssl::context::tls_client};
+                ctx.set_verify_mode(ssl::verify_none);
+                
+                tcp::resolver resolver{ioc};
+                websocket::stream<beast::ssl_stream<tcp::socket>> ws{ioc, ctx};
+                
+                auto const results = resolver.resolve(host, port);
+                net::connect(ws.next_layer().next_layer(), results.begin(), results.end());
+                
+                if (!SSL_set_tlsext_host_name(ws.next_layer().native_handle(), host.c_str())) {
+                    beast::error_code ec{static_cast<int>(::ERR_get_error()), net::error::get_ssl_category()};
+                    throw beast::system_error{ec};
+                }
+                
+                ws.next_layer().handshake(ssl::stream_base::client);
+                ws.set_option(websocket::stream_base::timeout::suggested(beast::role_type::client));
+                ws.handshake(host, "/");
+                
+                // Subscribe
+                json sub;
+                sub["type"] = "subscribe";
+                sub["channel"] = "level2";
+                sub["product_ids"] = products_;
+                ws.write(net::buffer(sub.dump()));
+                
+                std::cout << "[COINBASE] Subscribed to " << products_.size() << " products\n";
+                
+                // Read loop
+                beast::flat_buffer buffer;
+                while (running_) {
+                    ws.read(buffer);
+                    std::string msg = beast::buffers_to_string(buffer.data());
+                    
+                    try {
+                        json j = json::parse(msg);
+                        
+                        // Normalize and push to queue
+                        if (j.contains("product_id") && (j.contains("bids") || j.contains("asks"))) {
+                            NormalizedQuote normalized = Normalizer::from_coinbase(j);
+                            
+                            // Push to lock-free queue (wait-free)
+                            while (!g_quote_queue.try_push(normalized) && running_) {
+                                std::this_thread::yield();
+                            }
+                        }
+                    } catch (const std::exception& e) {
+                        std::cerr << "[COINBASE] Parse error: " << e.what() << "\n";
+                    }
+                    
+                    buffer.consume(buffer.size());
+                }
+                
+                ws.close(websocket::close_code::normal);
+                
+            } catch (const std::exception& e) {
+                std::cerr << "[COINBASE] Error: " << e.what() << "\n";
+            }
+            
+            std::cout << "[COINBASE] Feed stopped\n";
+        });
+    }
+    
+    void stop() {
+        running_ = false;
+        if (thread_.joinable()) thread_.join();
+    }
+    
+private:
+    std::vector<std::string> products_;
+    std::atomic<bool> running_;
+    std::thread thread_;
+};
+
+// Modified WsL2Client wrapper for Binance
+class BinanceFeedThread {
+public:
+    BinanceFeedThread(const std::vector<std::string>& symbols)
+        : symbols_(symbols), running_(false) {}
+
+    void start() {
+        running_ = true;
+        thread_ = std::thread([this]() {
+            std::cout << "[BINANCE] Starting WebSocket feed...\n";
+            try {
+                // Use your binance_ws_client.hpp
+                exchanges::BinanceWebSocketClient client;
+                client.connect(symbols_, [&](const json& msg, const std::string& symbol) {
+                    NormalizedQuote normalized = pipeline::MultiExchangeNormalizer::normalize_binance(msg, symbol);
+                    while (!g_quote_queue.try_push(normalized) && running_) {
+                        std::this_thread::yield();
+                    }
+                });
+                while (running_) std::this_thread::sleep_for(std::chrono::seconds(1));
+                client.close();
+            } catch (const std::exception& e) {
+                std::cerr << "[BINANCE] Error: " << e.what() << "\n";
+            }
+            std::cout << "[BINANCE] Feed stopped\n";
+        });
+    }
+    void stop() {
+        running_ = false;
+        if (thread_.joinable()) thread_.join();
+    }
+private:
+    std::vector<std::string> symbols_;
+    std::atomic<bool> running_;
+    std::thread thread_;
+};
+
+// Modified WsL2Client wrapper for Kraken
+class KrakenFeedThread {
+public:
+    KrakenFeedThread(const std::vector<std::string>& symbols)
+        : symbols_(symbols), running_(false) {}
+    void start() {
+        running_ = true;
+        thread_ = std::thread([this]() {
+            std::cout << "[KRAKEN] Starting WebSocket feed...\n";
+            try {
+                exchanges::KrakenWebSocketClient client;
+                client.connect(symbols_, [&](const json& msg, const std::string& symbol) {
+                    NormalizedQuote normalized = pipeline::MultiExchangeNormalizer::normalize_kraken(msg, symbol);
+                    while (!g_quote_queue.try_push(normalized) && running_) {
+                        std::this_thread::yield();
+                    }
+                });
+                while (running_) std::this_thread::sleep_for(std::chrono::seconds(1));
+                client.close();
+            } catch (const std::exception& e) {
+                std::cerr << "[KRAKEN] Error: " << e.what() << "\n";
+            }
+            std::cout << "[KRAKEN] Feed stopped\n";
+        });
+    }
+    void stop() {
+        running_ = false;
+        if (thread_.joinable()) thread_.join();
+    }
+private:
+    std::vector<std::string> symbols_;
+    std::atomic<bool> running_;
+    std::thread thread_;
+};
+
+// Monitoring thread
+void monitoring_thread() {
+    std::cout << "[MONITOR] Started\n";
+    
+    auto start_time = std::chrono::steady_clock::now();
+    int iteration = 0;
+    
+    while (g_running && iteration < 60) {  // Run for 60 seconds
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - start_time).count();
+        
+        auto qps = g_quotes_received.load() / std::max(1L, elapsed);
+        
+        std::cout << "\n[STATS] T+" << elapsed << "s"
+                  << " | Received: " << g_quotes_received.load()
+                  << " | QPS: " << qps
+                  << " | Cached: " << g_quotes_cached.load()
+                  << " | Persisted: " << g_quotes_persisted.load()
+                  << " | Cache Size: " << g_inmem_cache.size()
+                  << "\n";
+        
+        // Show latest quotes from cache
+        NormalizedQuote latest;
+        if (g_inmem_cache.get("coinbase", "BTC-USD", latest)) {
+            std::cout << "  [coinbase] BTC-USD: $" << latest.best_bid 
+                      << " / $" << latest.best_ask
+                      << " (spread: " << latest.spread_bps() << " bps, "
+                      << "latency: " << latest.latency_us() << " us)\n";
+        }
+        if (g_inmem_cache.get("coinbase", "ETH-USD", latest)) {
+            std::cout << "  [coinbase] ETH-USD: $" << latest.best_bid 
+                      << " / $" << latest.best_ask
+                      << " (spread: " << latest.spread_bps() << " bps)\n";
+        }
+        
+        iteration++;
+    }
+    
+    std::cout << "\n[MONITOR] Test duration complete, shutting down...\n";
+    g_running = false;
+}
+
+int main() {
+    std::cout << R"(
+╔═══════════════════════════════════════════════════════════════════╗
+║       PRODUCTION MULTI-EXCHANGE HFT PIPELINE                      ║
+║                                                                   ║
+║  Coinbase WebSocket → Normalize → Lock-Free MPMC Queue →         ║
+║                                                        Consumer → ║
+║                                                    In-Memory Cache║
+║                                                    SQLite Storage ║
+║                                                                   ║
+║  Components:                                                      ║
+║    • Lock-Free MPMC Queue (1M capacity)                          ║
+║    • In-Memory Latest Quotes Cache                               ║
+║    • SQLite WAL Mode (Batched Writes)                            ║
+║    • CPU Pinning (Consumer on Core 2)                            ║
+╚═══════════════════════════════════════════════════════════════════╝
+)" << "\n";
+    
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+    
+    // Initialize SQLite storage (WAL mode for concurrent access)
+    std::cout << "[MAIN] Initializing SQLite storage (WAL mode)...\n";
+    g_sqlite_store = new MarketDataStore("production_market_data.db");
+    std::cout << "[MAIN] Current DB quote count: " << g_sqlite_store->get_quote_count() << "\n";
+    
+    // Start consumer thread (dequeues and stores)
+    std::cout << "[MAIN] Starting quote consumer thread...\n";
+    std::thread consumer(quote_consumer_thread);
+    
+    // Start monitoring
+    std::cout << "[MAIN] Starting monitoring thread...\n";
+    std::thread monitor(monitoring_thread);
+    
+    // Start Coinbase feed
+    std::cout << "[MAIN] Starting Coinbase feed...\n";
+    CoinbaseFeedThread coinbase_feed({"BTC-USD", "ETH-USD", "SOL-USD"});
+    coinbase_feed.start();
+
+    // Start Binance feed
+    std::cout << "[MAIN] Starting Binance feed...\n";
+    BinanceFeedThread binance_feed({"BTCUSDT", "ETHUSDT"});
+    binance_feed.start();
+
+    // Start Kraken feed
+    std::cout << "[MAIN] Starting Kraken feed...\n";
+    KrakenFeedThread kraken_feed({"XBT/USD", "ETH/USD"});
+    kraken_feed.start();
+    
+    // Wait for monitoring to complete
+    monitor.join();
+    
+    // Shutdown
+    std::cout << "[MAIN] Stopping feeds...\n";
+    coinbase_feed.stop();
+    binance_feed.stop();
+    kraken_feed.stop();
+    
+    std::cout << "[MAIN] Stopping consumer...\n";
+    consumer.join();
+    
+    // Final statistics
+    std::cout << "\n" << std::string(70, '=') << "\n";
+    std::cout << "FINAL STATISTICS\n";
+    std::cout << std::string(70, '=') << "\n";
+    std::cout << "Total quotes received:  " << g_quotes_received.load() << "\n";
+    std::cout << "Quotes cached:          " << g_quotes_cached.load() << "\n";
+    std::cout << "Quotes persisted:       " << g_quotes_persisted.load() << "\n";
+    std::cout << "In-memory cache size:   " << g_inmem_cache.size() << "\n";
+    std::cout << "SQLite total rows:      " << g_sqlite_store->get_quote_count() << "\n";
+    std::cout << "\n✓ Production multi-exchange pipeline completed successfully\n\n";
+    
+    delete g_sqlite_store;
+    return 0;
+}

@@ -1,0 +1,153 @@
+// Complete system latency test: Parse + Order Book + Strategy Logic
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <chrono>
+#include "../md/normalizer.hpp"
+#include "../md/order_book.hpp"
+#include "../core/latency_tracker.hpp"
+
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        std::cerr << "Usage: " << argv[0] << " <ndjson_file> [product]\n";
+        return 1;
+    }
+
+    std::string target_product = (argc > 2) ? argv[2] : "ZEC-USD";
+
+    LatencyTracker parse_lat;
+    LatencyTracker book_lat;
+    LatencyTracker strategy_lat;
+    LatencyTracker total_lat;
+    
+    Normalizer norm;
+    OrderBook mdob;
+    
+    std::ifstream ifs(argv[1]);
+    std::string line;
+    int line_count = 0;
+    int book_updates = 0;
+    int strategy_calls = 0;
+    
+    std::cout << "=== COMPLETE SYSTEM LATENCY TEST ===\n";
+    std::cout << "File: " << argv[1] << "\n";
+    std::cout << "Target Product: " << target_product << "\n";
+    std::cout << "Measuring: Parse → Book Update → Strategy Decision\n\n";
+    
+    while (std::getline(ifs, line) && line_count < 10000) {
+        if (line.empty()) continue;
+        line_count++;
+        
+        auto t0_start = std::chrono::high_resolution_clock::now();
+        
+        // 1. PARSE
+        std::vector<L2Snapshot> snaps;
+        std::vector<L2Update> updates;
+        auto t1_parse_start = std::chrono::high_resolution_clock::now();
+        Normalizer::parse(line, snaps, updates);
+        auto t2_parse_end = std::chrono::high_resolution_clock::now();
+        
+        long long parse_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t2_parse_end - t1_parse_start).count();
+        parse_lat.add_sample(parse_ns);
+        
+        // 2. ORDER BOOK UPDATE
+        for (auto& s : snaps) {
+            if (s.product == target_product) {
+                auto t3_book_start = std::chrono::high_resolution_clock::now();
+                mdob.on_snapshot(s);
+                auto t4_book_end = std::chrono::high_resolution_clock::now();
+                
+                long long book_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t4_book_end - t3_book_start).count();
+                book_lat.add_sample(book_ns);
+                book_updates++;
+                
+                // 3. STRATEGY DECISION (Imbalance calculation)
+                auto& cob = mdob.book();
+                if (cob.best_bid() && cob.best_ask()) {
+                    auto t5_strat_start = std::chrono::high_resolution_clock::now();
+                    
+                    // Imbalance strategy logic
+                    double bid_qty = cob.qty_at_bid(*cob.best_bid());
+                    double ask_qty = cob.qty_at_ask(*cob.best_ask());
+                    double total_qty = bid_qty + ask_qty + 1e-9;
+                    double imbalance = (bid_qty - ask_qty) / total_qty;
+                    
+                    // Trading decision
+                    int signal = 0;
+                    if (imbalance > 0.6) signal = 1;      // Buy
+                    else if (imbalance < -0.6) signal = -1;  // Sell
+                    
+                    auto t6_strat_end = std::chrono::high_resolution_clock::now();
+                    
+                    long long strat_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t6_strat_end - t5_strat_start).count();
+                    strategy_lat.add_sample(strat_ns);
+                    strategy_calls++;
+                    
+                    // Total end-to-end
+                    long long total_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t6_strat_end - t0_start).count();
+                    total_lat.add_sample(total_ns);
+                }
+            }
+        }
+        
+        for (auto& u : updates) {
+            if (u.product == target_product) {
+                auto t3_book_start = std::chrono::high_resolution_clock::now();
+                mdob.on_update(u);
+                auto t4_book_end = std::chrono::high_resolution_clock::now();
+                
+                long long book_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t4_book_end - t3_book_start).count();
+                book_lat.add_sample(book_ns);
+                book_updates++;
+                
+                // 3. STRATEGY DECISION
+                auto& cob = mdob.book();
+                if (cob.best_bid() && cob.best_ask()) {
+                    auto t5_strat_start = std::chrono::high_resolution_clock::now();
+                    
+                    double bid_qty = cob.qty_at_bid(*cob.best_bid());
+                    double ask_qty = cob.qty_at_ask(*cob.best_ask());
+                    double total_qty = bid_qty + ask_qty + 1e-9;
+                    double imbalance = (bid_qty - ask_qty) / total_qty;
+                    
+                    int signal = 0;
+                    if (imbalance > 0.6) signal = 1;
+                    else if (imbalance < -0.6) signal = -1;
+                    
+                    auto t6_strat_end = std::chrono::high_resolution_clock::now();
+                    
+                    long long strat_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t6_strat_end - t5_strat_start).count();
+                    strategy_lat.add_sample(strat_ns);
+                    strategy_calls++;
+                    
+                    long long total_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t6_strat_end - t0_start).count();
+                    total_lat.add_sample(total_ns);
+                }
+            }
+        }
+    }
+    
+    std::cout << "\n============ FINAL RESULTS ============\n";
+    std::cout << "Lines processed:   " << line_count << "\n";
+    std::cout << "Book updates:      " << book_updates << "\n";
+    std::cout << "Strategy calls:    " << strategy_calls << "\n\n";
+    
+    std::cout << "[1] JSON PARSE:       ";
+    parse_lat.print_stats();
+    
+    std::cout << "[2] BOOK UPDATE:      ";
+    book_lat.print_stats();
+    
+    std::cout << "[3] STRATEGY LOGIC:   ";
+    strategy_lat.print_stats();
+    
+    std::cout << "\n[TOTAL] END-TO-END:   ";
+    total_lat.print_stats();
+    
+    std::cout << "\n=======================================\n";
+    std::cout << "✅ This is YOUR SYSTEM latency (what you control)\n";
+    std::cout << "⚠️  Network latency (Coinbase→You) is ADDITIONAL\n";
+    std::cout << "⚠️  For HFT, aim for total < 50μs\n";
+    
+    return 0;
+}
