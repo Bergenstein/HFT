@@ -1,0 +1,314 @@
+
+╔═══════════════════════════════════════════════════════════╗
+║   PRODUCTION FUNDING RATE ARBITRAGE SYSTEM               ║
+║   L2 → Normalize → SPSC → Funding Arb Engine             ║
+╚═══════════════════════════════════════════════════════════╝
+
+[1/4] Building multi-exchange system...
+      ✓ Built with 3 exchanges
+
+[2/4] Configuring funding arbitrage engine...
+      ✓ Min spread: 10% APY
+      ✓ Min liquidity: $1000
+
+[3/4] Starting system...
+[Feeder] Started for binance
+[Feeder] Started for bybit
+[System] Started 3 exchange feeders
+      ✓ All exchange feeders started
+      ✓ SPSC queues active
+
+[4/4] Running arbitrage detection for 60s...
+      Press Ctrl+C to stop early
+
+      ⏳ Waiting 5s for initial data fetch...
+[Feeder] Started for gateio
+      ✓ Initial data fetch complete
+
+
+[DEBUG] Sample funding rates:
+
+[Stats] Updates: 0 | Opportunities: 0[Stats] Updates: 21 | Opportunities: 0[Stats] Updates: 21 | Opportunities: 0[Stats] Updates: 21 | Opportunities: 0[Stats] Updates: 21 | Opportunities: 0[Stats] Updates: 51 | Opportunities: 0[Stats] Updates: 51 | Opportunities: 0[Stats] Updates: 63 | Opportunities: 0[Stats] Updates: 63 | Opportunities: 0[Stats] Updates: 93 | Opportunities: 0[Stats] Updates: 93 | Opportunities: 0
+━━━ Scan #12 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Found 9 opportunities:
+
+1. 0G/USDT: 104.42% APY
+   Long:  bybit @ -146.79% APY
+   Short: binance @ -42.23% APY
+   Spread: 104.56% | Liquidity: $86
+
+2. 4/USDT: 73.88% APY
+   Long:  binance @ 13.41% APY
+   Short: bybit @ 87.43% APY
+   Spread: 74.02% | Liquidity: $8804
+
+3. 1000FLOKI/USDT: 27.49% APY
+   Long:  binance @ -20.28% APY
+   Short: bybit @ 7.35% APY
+   Spread: 27.63% | Liquidity: $7308
+
+4. 1000XEC/USDT: 26.76% APY
+   Long:  bybit @ -15.94% APY
+   Short: binance @ 10.95% APY
+   Spread: 26.89% | Liquidity: $9190
+
+5. ACE/USDT: 15.41% APY
+   Long:  binance @ -4.59% APY
+   Short: bybit @ 10.95% APY
+   Spread: 15.54% | Liquidity: $1084
+
+[Stats] Updates: 124 | Opportunities: 9
+━━━ Scan #13 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Found 9 opportunities:
+
+1. 0G/USDT: 104.42% APY
+   Long:  bybit @ -146.79% APY
+   Short: binance @ -42.23% APY
+   Spread: 104.56% | Liquidity: $86
+
+2. 4/USDT: 73.88% APY
+   Long:  binance @ 13.41% APY
+   Short: bybit @ 87.43% APY
+   Spread: 74.02% | Liquidity: $8804
+
+3. 1000FLOKI/USDT: 27.49% APY
+   Long:  binance @ -20.28% APY
+   Short: bybit @ 7.35% APY
+   Spread: 27.63% | Liquidity: $7308
+
+4. 1000XEC/USDT: 26.76% APY
+   Long:  bybit @ -15.94% APY
+   Short: binance @ 10.95% APY
+   Spread: 26.89% | Liquidity: $9190
+
+5. ACE/USDT: 15.41% APY
+   Long:  binance @ -4.59% APY
+   Short: bybit @ 10.95% APY
+   Spread: 15.54% | Liquidity: $1084
+
+[Stats] Updates: 124 | Opportunities: 18
+━━━ Scan #14 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Found 9 opportunities:
+
+1. 4/USDT: 78.56% APY
+   Long:  binance @ 13.41% APY
+   Short: bybit @ 92.11% APY
+   Spread: 78.70% | Liquidity: $69203
+
+2. 0G/USDT: 59.44% APY
+   Long:  bybit @ -101.81% APY
+   Short: binance @ -42.23% APY
+   Spread: 59.58% | Liquidity: $86
+
+3. 1000FLOKI/USDT: 27.66% APY
+   Long:  binance @ -20.28% APY
+   Short: bybit @ 7.52% APY
+   Spread: 27.80% | Liquidity: $9275
+
+4. 1000XEC/USDT: 26.76% APY
+   Long:  bybit @ -15.94% APY
+   Short: binance @ 10.95% APY
+   Spread: 26.89% | Liquidity: $9220
+
+5. ACE/USDT: 15.41% APY
+   Long:  binance @ -4.59% APY
+   Short: bybit @ 10.95% APY
+   Spread: 15.54% | Liquidity: $909
+
+[Stats] Updates: 154 | Opportunities: 27
+━━━ Scan #15 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Found 9 opportunities:
+
+1. 4/USDT: 78.56% APY
+   Long:  binance @ 13.41% APY
+   Short: bybit @ 92.11% APY
+   Spread: 78.70% | Liquidity: $69203
+
+2. 0G/USDT: 59.44% APY
+   Long:  bybit @ -101.81% APY
+   Short: binance @ -42.23% APY
+   Spread: 59.58% | Liquidity: $86
+
+3. 1000FLOKI/USDT: 27.66% APY
+   Long:  binance @ -20.28% APY
+   Short: bybit @ 7.52% APY
+   Spread: 27.80% | Liquidity: $9275
+
+4. 1000XEC/USDT: 26.76% APY
+   Long:  bybit @ -15.94% APY
+   Short: binance @ 10.95% APY
+   Spread: 26.89% | Liquidity: $9220
+
+5. ACE/USDT: 15.41% APY
+   Long:  binance @ -4.59% APY
+   Short: bybit @ 10.95% APY
+   Spread: 15.54% | Liquidity: $909
+
+[Stats] Updates: 154 | Opportunities: 36
+━━━ Scan #16 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Found 9 opportunities:
+
+1. 4/USDT: 78.56% APY
+   Long:  binance @ 13.41% APY
+   Short: bybit @ 92.11% APY
+   Spread: 78.70% | Liquidity: $69203
+
+2. 0G/USDT: 59.44% APY
+   Long:  bybit @ -101.81% APY
+   Short: binance @ -42.23% APY
+   Spread: 59.58% | Liquidity: $86
+
+3. 1000FLOKI/USDT: 27.66% APY
+   Long:  binance @ -20.28% APY
+   Short: bybit @ 7.52% APY
+   Spread: 27.80% | Liquidity: $9275
+
+4. 1000XEC/USDT: 26.76% APY
+   Long:  bybit @ -15.94% APY
+   Short: binance @ 10.95% APY
+   Spread: 26.89% | Liquidity: $9220
+
+5. ACE/USDT: 15.41% APY
+   Long:  binance @ -4.59% APY
+   Short: bybit @ 10.95% APY
+   Spread: 15.54% | Liquidity: $909
+
+[Stats] Updates: 154 | Opportunities: 45
+━━━ Scan #17 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Found 9 opportunities:
+
+1. 4/USDT: 78.56% APY
+   Long:  binance @ 13.41% APY
+   Short: bybit @ 92.11% APY
+   Spread: 78.70% | Liquidity: $69203
+
+2. 0G/USDT: 59.44% APY
+   Long:  bybit @ -101.81% APY
+   Short: binance @ -42.23% APY
+   Spread: 59.58% | Liquidity: $86
+
+3. 1000FLOKI/USDT: 27.66% APY
+   Long:  binance @ -20.28% APY
+   Short: bybit @ 7.52% APY
+   Spread: 27.80% | Liquidity: $9275
+
+4. 1000XEC/USDT: 26.76% APY
+   Long:  bybit @ -15.94% APY
+   Short: binance @ 10.95% APY
+   Spread: 26.89% | Liquidity: $9220
+
+5. ACE/USDT: 15.41% APY
+   Long:  binance @ -4.59% APY
+   Short: bybit @ 10.95% APY
+   Spread: 15.54% | Liquidity: $909
+
+[Stats] Updates: 204 | Opportunities: 54
+━━━ Scan #18 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Found 9 opportunities:
+
+1. 4/USDT: 78.56% APY
+   Long:  binance @ 13.41% APY
+   Short: bybit @ 92.11% APY
+   Spread: 78.70% | Liquidity: $69203
+
+2. 0G/USDT: 59.44% APY
+   Long:  bybit @ -101.81% APY
+   Short: binance @ -42.23% APY
+   Spread: 59.58% | Liquidity: $86
+
+3. 1000FLOKI/USDT: 27.66% APY
+   Long:  binance @ -20.28% APY
+   Short: bybit @ 7.52% APY
+   Spread: 27.80% | Liquidity: $9275
+
+4. 1000XEC/USDT: 26.76% APY
+   Long:  bybit @ -15.94% APY
+   Short: binance @ 10.95% APY
+   Spread: 26.89% | Liquidity: $9220
+
+5. ACE/USDT: 15.41% APY
+   Long:  binance @ -4.59% APY
+   Short: bybit @ 10.95% APY
+   Spread: 15.54% | Liquidity: $909
+
+[Stats] Updates: 204 | Opportunities: 63
+━━━ Scan #19 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Found 9 opportunities:
+
+1. 4/USDT: 78.56% APY
+   Long:  binance @ 13.41% APY
+   Short: bybit @ 92.11% APY
+   Spread: 78.70% | Liquidity: $69203
+
+2. 0G/USDT: 59.44% APY
+   Long:  bybit @ -101.81% APY
+   Short: binance @ -42.23% APY
+   Spread: 59.58% | Liquidity: $86
+
+3. 1000FLOKI/USDT: 27.66% APY
+   Long:  binance @ -20.28% APY
+   Short: bybit @ 7.52% APY
+   Spread: 27.80% | Liquidity: $9275
+
+4. 1000XEC/USDT: 26.76% APY
+   Long:  bybit @ -15.94% APY
+   Short: binance @ 10.95% APY
+   Spread: 26.89% | Liquidity: $9220
+
+5. ACE/USDT: 15.41% APY
+   Long:  binance @ -4.59% APY
+   Short: bybit @ 10.95% APY
+   Spread: 15.54% | Liquidity: $909
+
+[Stats] Updates: 204 | Opportunities: 72
+━━━ Scan #20 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Found 9 opportunities:
+
+1. 4/USDT: 78.56% APY
+   Long:  binance @ 13.41% APY
+   Short: bybit @ 92.11% APY
+   Spread: 78.70% | Liquidity: $69203
+
+2. 0G/USDT: 59.44% APY
+   Long:  bybit @ -101.81% APY
+   Short: binance @ -42.23% APY
+   Spread: 59.58% | Liquidity: $86
+
+3. 1000FLOKI/USDT: 27.66% APY
+   Long:  binance @ -20.28% APY
+   Short: bybit @ 7.52% APY
+   Spread: 27.80% | Liquidity: $9275
+
+4. 1000XEC/USDT: 26.76% APY
+   Long:  bybit @ -15.94% APY
+   Short: binance @ 10.95% APY
+   Spread: 26.89% | Liquidity: $9220
+
+5. ACE/USDT: 15.41% APY
+   Long:  binance @ -4.59% APY
+   Short: bybit @ 10.95% APY
+   Spread: 15.54% | Liquidity: $909
+
+[Stats] Updates: 204 | Opportunities: 81
+
+[Shutdown] Stopping system...
+[Feeder] Stopped for binance
+[Feeder] Stopped for bybit
+[Feeder] Stopped for gateio
+[System] Stopped all feeders and aggregator
+
+╔═══════════════════════════════════════════════════════════╗
+║                   FINAL REPORT                            ║
+╚═══════════════════════════════════════════════════════════╝
+
+Market Data:
+  Updates Processed:     360
+  Scans Performed:       20
+
+Arbitrage:
+  Total Opportunities:   81
+  Best Opportunity:      0G/USDT @ 104.42% APY
+
+✓ System shutdown complete
+
+[System] Stopped all feeders and aggregator

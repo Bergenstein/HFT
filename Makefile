@@ -45,7 +45,7 @@ ABSEIL_LIBS := -labsl_log_internal_check_op -labsl_log_internal_conditions \
                -labsl_debugging_internal -labsl_demangle_internal -labsl_raw_logging_internal
 
 LIBS     := -L$(OPENSSL_PREFIX)/lib -L$(ZMQ_PREFIX)/lib -L$(PROTOBUF_PREFIX)/lib -L$(ABSEIL_PREFIX)/lib \
-            -lssl -lcrypto -lpthread -lzmq -lprotobuf $(ABSEIL_LIBS)
+            -lssl -lcrypto -lpthread -lzmq -lprotobuf -lcurl $(ABSEIL_LIBS)
 
 BUILDDIR := build
 SRCDIRS  := discovery md net io core bt
@@ -117,6 +117,11 @@ $(BUILDDIR)/%.o: %.cpp
 
 # Compile proto files
 $(BUILDDIR)/proto/%.pb.o: proto/%.pb.cc
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+# Compile test_scripts files
+$(BUILDDIR)/test_scripts/%.o: test_scripts/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
@@ -676,3 +681,102 @@ $(MATCHING_SIMPLE_BIN): $(MATCHING_SIMPLE_SRC)
 	@mkdir -p $(BUILDDIR)
 	$(CXX) -std=c++20 -O2 $(INCLUDES) -o $@ $<
 	@echo "✓ Built matching engine simple test"
+
+# ============================================================================
+# MULTI-EXCHANGE FUNDING RATE FETCHER
+# ============================================================================
+
+# Test multi-exchange funding fetcher
+TEST_MULTI_EXCHANGE_FUNDING_MAIN := run/test_multi_exchange_funding.cpp
+TEST_MULTI_EXCHANGE_FUNDING_OBJ  := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(TEST_MULTI_EXCHANGE_FUNDING_MAIN))
+TEST_MULTI_EXCHANGE_FUNDING_BIN  := $(BUILDDIR)/test_multi_exchange_funding
+
+$(TEST_MULTI_EXCHANGE_FUNDING_BIN): $(TEST_MULTI_EXCHANGE_FUNDING_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
+	@echo "✓ Built test_multi_exchange_funding"
+
+.PHONY: test_funding_fetcher
+test_funding_fetcher: $(TEST_MULTI_EXCHANGE_FUNDING_BIN)
+
+# ============================================================================
+# MULTI-EXCHANGE L2 + FUNDING FETCHER
+# ============================================================================
+
+TEST_MULTI_EXCHANGE_L2_MAIN := test_scripts/test_multi_exchange_l2.cpp
+TEST_MULTI_EXCHANGE_L2_OBJ  := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(TEST_MULTI_EXCHANGE_L2_MAIN))
+TEST_MULTI_EXCHANGE_L2_BIN  := $(BUILDDIR)/test_multi_exchange_l2
+
+$(TEST_MULTI_EXCHANGE_L2_BIN): $(TEST_MULTI_EXCHANGE_L2_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
+	@echo "✓ Built test_multi_exchange_l2"
+
+.PHONY: test_multi_exchange_l2
+test_multi_exchange_l2: $(TEST_MULTI_EXCHANGE_L2_BIN)
+
+# Individual exchange test targets
+.PHONY: test_binance test_bybit test_okx test_gateio test_mexc test_kucoin test_kraken test_bitget test_htx test_bingx
+test_binance: $(TEST_MULTI_EXCHANGE_L2_BIN)
+	@echo "=== Testing Binance Exchange ==="
+	@$(TEST_MULTI_EXCHANGE_L2_BIN) binance
+
+test_bybit: $(TEST_MULTI_EXCHANGE_L2_BIN)
+	@echo "=== Testing Bybit Exchange ==="
+	@$(TEST_MULTI_EXCHANGE_L2_BIN) bybit
+
+test_okx: $(TEST_MULTI_EXCHANGE_L2_BIN)
+	@echo "=== Testing OKX Exchange ==="
+	@$(TEST_MULTI_EXCHANGE_L2_BIN) okx
+
+test_gateio: $(TEST_MULTI_EXCHANGE_L2_BIN)
+	@echo "=== Testing Gate.io Exchange ==="
+	@$(TEST_MULTI_EXCHANGE_L2_BIN) gateio
+
+test_mexc: $(TEST_MULTI_EXCHANGE_L2_BIN)
+	@echo "=== Testing MEXC Exchange ==="
+	@$(TEST_MULTI_EXCHANGE_L2_BIN) mexc
+
+test_kucoin: $(TEST_MULTI_EXCHANGE_L2_BIN)
+	@echo "=== Testing KuCoin Exchange ==="
+	@$(TEST_MULTI_EXCHANGE_L2_BIN) kucoin
+
+test_kraken: $(TEST_MULTI_EXCHANGE_L2_BIN)
+	@echo "=== Testing Kraken Exchange ==="
+	@$(TEST_MULTI_EXCHANGE_L2_BIN) kraken
+
+test_bitget: $(TEST_MULTI_EXCHANGE_L2_BIN)
+	@echo "=== Testing Bitget Exchange ==="
+	@$(TEST_MULTI_EXCHANGE_L2_BIN) bitget
+
+test_htx: $(TEST_MULTI_EXCHANGE_L2_BIN)
+	@echo "=== Testing HTX Exchange ==="
+	@$(TEST_MULTI_EXCHANGE_L2_BIN) htx
+
+test_bingx: $(TEST_MULTI_EXCHANGE_L2_BIN)
+	@echo "=== Testing BingX Exchange ==="
+	@$(TEST_MULTI_EXCHANGE_L2_BIN) bingx
+
+.PHONY: test_all_exchanges
+test_all_exchanges: $(TEST_MULTI_EXCHANGE_L2_BIN)
+	@echo "=== Testing ALL Exchanges ==="
+	@$(TEST_MULTI_EXCHANGE_L2_BIN) all
+
+# ============================================================================
+# TEST INTEGRATED PIPELINE (Full Pipeline with SPSC Queues + Storage)
+# ============================================================================
+
+TEST_INTEGRATED_PIPELINE_MAIN := test_scripts/test_integrated_pipeline.cpp
+TEST_INTEGRATED_PIPELINE_OBJ  := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(TEST_INTEGRATED_PIPELINE_MAIN))
+TEST_INTEGRATED_PIPELINE_BIN  := $(BUILDDIR)/test_integrated_pipeline
+
+$(TEST_INTEGRATED_PIPELINE_BIN): $(COMMON_OBJS) $(TEST_INTEGRATED_PIPELINE_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS) -lsqlite3
+	@echo "✓ Built test_integrated_pipeline (Full Pipeline)"
+
+.PHONY: test_integrated_pipeline test_pipeline
+test_integrated_pipeline: $(TEST_INTEGRATED_PIPELINE_BIN)
+test_pipeline: test_integrated_pipeline
+
+# ============================================================================

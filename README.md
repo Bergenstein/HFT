@@ -212,6 +212,8 @@ Fetches current funding rates from multiple exchanges and identifies arbitrage o
 ```
 ---
 
+
+
 ## Dashboard
 
 ### Run Backtest and View Results
@@ -306,3 +308,11 @@ Environment variables for API keys:
 ## License
 
 MIT
+
+
+## Backtest:
+./build/backtest_to_json BTCUSDT 1.0
+
+ls -lh backtest_results.json
+
+python3 -m http.server 8080
