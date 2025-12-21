@@ -10,7 +10,6 @@ CXXFLAGS  := -std=c++20 -Wall -Wextra -O2 -pthread
 OPENSSL_PREFIX := $(shell brew --prefix openssl@3 2>/dev/null || echo /opt/homebrew/opt/openssl@3)
 BOOST_PREFIX   := $(shell brew --prefix boost 2>/dev/null || echo /opt/homebrew/opt/boost)
 JSON_PREFIX    := $(shell brew --prefix nlohmann-json 2>/dev/null || echo /opt/homebrew/opt/nlohmann-json)
-SIMDJSON_PREFIX := $(shell brew --prefix simdjson 2>/dev/null || echo /opt/homebrew/opt/simdjson)
 ZMQ_PREFIX     := $(shell brew --prefix zeromq 2>/dev/null || echo /opt/homebrew/opt/zeromq)
 CPPZMQ_PREFIX  := $(shell brew --prefix cppzmq 2>/dev/null || echo /opt/homebrew/opt/cppzmq)
 PROTOBUF_PREFIX := $(shell brew --prefix protobuf 2>/dev/null || echo /opt/homebrew/opt/protobuf)
@@ -18,8 +17,8 @@ ABSEIL_PREFIX  := $(shell brew --prefix abseil 2>/dev/null || echo /opt/homebrew
 WEBSOCKETPP_PREFIX := $(shell brew --prefix websocketpp 2>/dev/null || echo /opt/homebrew/opt/websocketpp)
 
 INCLUDES := -I. -I$(BOOST_PREFIX)/include -I$(OPENSSL_PREFIX)/include -I$(JSON_PREFIX)/include \
-            -I$(SIMDJSON_PREFIX)/include -I$(ZMQ_PREFIX)/include -I$(CPPZMQ_PREFIX)/include \
-            -I$(PROTOBUF_PREFIX)/include -I$(ABSEIL_PREFIX)/include -I$(WEBSOCKETPP_PREFIX)/include
+            -I$(ZMQ_PREFIX)/include -I$(CPPZMQ_PREFIX)/include -I$(PROTOBUF_PREFIX)/include \
+            -I$(ABSEIL_PREFIX)/include -I$(WEBSOCKETPP_PREFIX)/include
 
 # Abseil libraries (required by protobuf)
 ABSEIL_LIBS := -labsl_log_internal_check_op -labsl_log_internal_conditions \
@@ -39,7 +38,7 @@ ABSEIL_LIBS := -labsl_log_internal_check_op -labsl_log_internal_conditions \
                -labsl_debugging_internal -labsl_demangle_internal -labsl_raw_logging_internal
 
 LIBS     := -L$(OPENSSL_PREFIX)/lib -L$(ZMQ_PREFIX)/lib -L$(PROTOBUF_PREFIX)/lib -L$(ABSEIL_PREFIX)/lib \
-            -L$(SIMDJSON_PREFIX)/lib -lssl -lcrypto -lpthread -lzmq -lprotobuf -lsimdjson -lcurl $(ABSEIL_LIBS)
+            -lssl -lcrypto -lpthread -lzmq -lprotobuf -lcurl $(ABSEIL_LIBS)
 
 BUILDDIR := build
 SRCDIRS  := discovery md net io core
@@ -70,10 +69,6 @@ MULTI_EXCHANGE_BIN  := $(BUILDDIR)/complete_multi_exchange_pipeline
 PRODUCTION_HFT_MAIN := run/production_hft_system.cpp
 PRODUCTION_HFT_BIN  := $(BUILDDIR)/production_hft_system
 
-# System API Server (for blackbox strategies)
-SYSTEM_API_SERVER_MAIN := run/system_api_server.cpp
-SYSTEM_API_SERVER_BIN  := $(BUILDDIR)/system_api_server
-
 # Integration Tests
 TEST_HOT_COLD_MAIN := run/test_hot_cold_integration.cpp
 TEST_HOT_COLD_BIN  := $(BUILDDIR)/test_hot_cold_integration
@@ -98,28 +93,24 @@ BACKTEST_TO_JSON_BIN  := $(BUILDDIR)/backtest_to_json
 #==============================================================================
 
 # Lock-free Queue Tests
-LOCKFREE_TEST_MAIN := run/test_lockfree_queues.cpp
+LOCKFREE_TEST_MAIN := test_scripts/test_lockfree_queues.cpp
 LOCKFREE_TEST_BIN  := $(BUILDDIR)/test_lockfree_queues
 
 # ZMQ Tests
-ZMQ_PUBSUB_MAIN := run/test_zmq_pubsub.cpp
+ZMQ_PUBSUB_MAIN := test_scripts/test_zmq_pubsub.cpp
 ZMQ_PUBSUB_BIN  := $(BUILDDIR)/test_zmq_pubsub
 
 # Matching Engine Tests
-MATCHING_SIMPLE_MAIN := run/test_matching_engine_simple.cpp
+MATCHING_SIMPLE_MAIN := test_scripts/test_matching_engine_simple.cpp
 MATCHING_SIMPLE_BIN  := $(BUILDDIR)/test_matching_engine_simple
 
+# Multi-Exchange Tests (system-level)
+TEST_MULTI_EXCHANGE_FUNDING_MAIN := run/test_multi_exchange_funding.cpp
+TEST_MULTI_EXCHANGE_FUNDING_BIN  := $(BUILDDIR)/test_multi_exchange_funding
+
 # Integrated Pipeline Test
-TEST_INTEGRATED_PIPELINE_MAIN := tests/test_system_pipeline.cpp
+TEST_INTEGRATED_PIPELINE_MAIN := test_scripts/test_system_pipeline.cpp
 TEST_INTEGRATED_PIPELINE_BIN  := $(BUILDDIR)/test_system_pipeline
-
-# Funding Rate Simple Test
-TEST_FUNDING_SIMPLE_MAIN := tests/test_funding_rates_simple.cpp
-TEST_FUNDING_SIMPLE_BIN  := $(BUILDDIR)/test_funding_rates_simple
-
-# End-to-End Latency Test
-TEST_LATENCY_MAIN := tests/test_end_to_end_latency.cpp
-TEST_LATENCY_BIN  := $(BUILDDIR)/test_end_to_end_latency
 
 #==============================================================================
 # BUILD RULES
@@ -132,13 +123,17 @@ all: system
 
 # System components (no strategies)
 system: $(STREAM_BIN) $(STREAM_LAT_BIN) $(REPLAY_BIN) $(SCAN_BIN) \
-        $(MULTI_EXCHANGE_BIN) $(PRODUCTION_HFT_BIN) $(SYSTEM_API_SERVER_BIN) \
+        $(MULTI_EXCHANGE_BIN) $(PRODUCTION_HFT_BIN) \
         $(TEST_HOT_COLD_BIN) $(FULL_SYSTEM_BIN) \
         $(DASHBOARD_SERVER_BIN) $(BACKTEST_SQLITE_BIN) $(BACKTEST_TO_JSON_BIN)
 
 # System tests
 tests: $(LOCKFREE_TEST_BIN) $(ZMQ_PUBSUB_BIN) $(MATCHING_SIMPLE_BIN) \
-       $(TEST_INTEGRATED_PIPELINE_BIN) $(TEST_FUNDING_SIMPLE_BIN) $(TEST_LATENCY_BIN)
+       $(TEST_MULTI_EXCHANGE_FUNDING_BIN) $(TEST_INTEGRATED_PIPELINE_BIN)
+
+clean:
+	rm -rf $(BUILDDIR)
+	@echo "✓ Cleaned build directory"
 
 # Generic compilation rules
 $(BUILDDIR)/%.o: %.cpp
@@ -182,12 +177,6 @@ $(PRODUCTION_HFT_BIN): $(COMMON_OBJS) $(BUILDDIR)/run/production_hft_system.o $(
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS) -lsqlite3
 	@echo "✓ Built $@"
 
-# System API Server
-$(SYSTEM_API_SERVER_BIN): $(COMMON_OBJS) $(BUILDDIR)/run/system_api_server.o
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS) -lsqlite3
-	@echo "✓ Built $@"
-
 # Integration tests
 $(TEST_HOT_COLD_BIN): $(COMMON_OBJS) $(BUILDDIR)/run/test_hot_cold_integration.o
 	@mkdir -p $(dir $@)
@@ -218,50 +207,43 @@ $(BACKTEST_TO_JSON_BIN): $(COMMON_OBJS) $(BUILDDIR)/run/backtest_to_json.o
 	@echo "✓ Built $@"
 
 # Test binaries
-$(LOCKFREE_TEST_BIN): $(BUILDDIR)/run/test_lockfree_queues.o
+$(LOCKFREE_TEST_BIN): $(BUILDDIR)/test_scripts/test_lockfree_queues.o
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
 	@echo "✓ Built $@"
 
-$(ZMQ_PUBSUB_BIN): $(BUILDDIR)/run/test_zmq_pubsub.o $(BUILDDIR)/proto/messages.pb.o
+$(ZMQ_PUBSUB_BIN): $(BUILDDIR)/test_scripts/test_zmq_pubsub.o $(BUILDDIR)/proto/messages.pb.o
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
 	@echo "✓ Built $@"
 
-$(MATCHING_SIMPLE_BIN): $(BUILDDIR)/run/test_matching_engine_simple.o
+$(MATCHING_SIMPLE_BIN): $(BUILDDIR)/test_scripts/test_matching_engine_simple.o
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
 	@echo "✓ Built $@"
 
-$(TEST_INTEGRATED_PIPELINE_BIN): $(BUILDDIR)/tests/test_system_pipeline.o
+$(TEST_MULTI_EXCHANGE_FUNDING_BIN): $(COMMON_OBJS) $(BUILDDIR)/run/test_multi_exchange_funding.o
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS) -lsqlite3
 	@echo "✓ Built $@"
 
-$(TEST_FUNDING_SIMPLE_BIN): $(BUILDDIR)/tests/test_funding_rates_simple.o
+$(TEST_INTEGRATED_PIPELINE_BIN): $(BUILDDIR)/test_scripts/test_system_pipeline.o
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS) -lsqlite3
-	@echo "✓ Built $@"
-
-$(TEST_LATENCY_BIN): $(BUILDDIR)/tests/test_end_to_end_latency.o
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
 	@echo "✓ Built $@"
 
 #==============================================================================
 # UTILITY TARGETS
 #==============================================================================
 
-.PHONY: stream replay scan multi_exchange production api_server test_integration test_funding help
+.PHONY: stream replay scan multi_exchange production test_integration help
 
 stream: $(STREAM_BIN)
 replay: $(REPLAY_BIN)  
 scan: $(SCAN_BIN)
 multi_exchange: $(MULTI_EXCHANGE_BIN)
 production: $(PRODUCTION_HFT_BIN)
-api_server: $(SYSTEM_API_SERVER_BIN)
 test_integration: $(TEST_HOT_COLD_BIN) $(FULL_SYSTEM_BIN)
-test_funding: $(TEST_FUNDING_SIMPLE_BIN)
 
 clean:
 	rm -rf $(BUILDDIR)

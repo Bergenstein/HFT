@@ -1,6 +1,111 @@
 # HFT System Working Tests
 **System**: Multi-Exchange HFT Trading Platform  
-**Status**: Passed
+**Architecture**: Blackbox Strategy Execution (API-Based)  
+**Status**: ✅ Passed
+---
+
+## 🎯 BLACKBOX STRATEGY ARCHITECTURE (NEW)
+
+### Overview
+The system now supports **complete separation** between the core HFT system and trading strategies:
+- **HFT System**: Publishes market data via ZeroMQ API (doesn't know strategy logic)
+- **Strategies**: External binaries that connect to the system API (blackbox execution)
+- **Communication**: JSON over ZeroMQ (PUB/PULL sockets)
+- **Benefits**: Deploy strategies independently, protect IP, enable third-party strategies
+
+### Architecture Components
+
+**HFT System Side:**
+- `api/market_data_server.hpp` - ZeroMQ server for market data distribution
+- `api/strategy_client.hpp` - Client interface for strategy binaries
+- `run/system_api_server.cpp` - Standalone API server binary
+- Market Data: `tcp://*:5555` (PUB socket)
+- Trading Signals: `tcp://*:5556` (PULL socket)
+
+**Strategy Side (sabi-cppstrategies):**
+- `test_strategies/example_blackbox_strategy.cpp` - Example funding rate arbitrage
+- Strategies built as separate binaries
+- Connect to system via ZeroMQ
+- System never sees strategy logic
+
+---
+
+## 🧪 BLACKBOX API TESTS
+
+### 1. Complete Integration Test (Recommended)
+**What it tests:** Full end-to-end blackbox architecture with API server + external strategy
+```bash
+cd /Users/israelbergenstein/Desktop/Strategies_System/HFT_Full_Pipeline
+./how_to_test/run_blackbox_test.sh 30 3.0
+```
+**Expected:** 
+- ✅ API server starts and publishes market data
+- ✅ Strategy client connects and receives data
+- ✅ Strategy finds arbitrage opportunities (spread > 3% APY)
+- ✅ Both processes exit cleanly
+- ✅ "INTEGRATION TEST PASSED" message
+
+**Output Example:**
+```
+==========================================================================
+  ✅ INTEGRATION TEST PASSED
+==========================================================================
+
+The blackbox architecture is working correctly:
+  • System publishes market data via ZeroMQ
+  • Strategy connects as external binary
+  • Strategy finds arbitrage opportunities
+  • System doesn't know strategy logic (blackbox)
+```
+
+### 2. Build HFT System API Server
+```bash
+cd /Users/israelbergenstein/Desktop/Strategies_System/HFT_Full_Pipeline
+make api_server
+```
+**Expected:** `✅ Built: build/system_api_server`
+
+### 3. Build Strategy Client Binary
+```bash
+cd /Users/israelbergenstein/Desktop/Strategies_System/sabi-cppstrategies
+make blackbox-example
+```
+**Expected:** `✅ Built: example_blackbox_strategy (ZeroMQ client)`
+
+### 4. Run API Server (Standalone)
+```bash
+cd /Users/israelbergenstein/Desktop/Strategies_System/HFT_Full_Pipeline
+./build/system_api_server 60  # Run for 60 seconds
+```
+**Expected:**
+- Initializes ZeroMQ PUB/PULL sockets
+- Fetches funding rates from Binance + Bybit
+- Publishes market data every 2 seconds
+- Shows: `[Elapsed: Xs | Published: N | Signals Received: 0]`
+
+### 5. Run Strategy Client (Connects to Running Server)
+Open a second terminal:
+```bash
+cd /Users/israelbergenstein/Desktop/Strategies_System/sabi-cppstrategies
+./build/test/example_blackbox_strategy 30 3.0  # 30 sec runtime, 3% min spread
+```
+**Expected:**
+- Connects to tcp://localhost:5555 (market data)
+- Receives funding rate updates
+- Finds arbitrage opportunities
+- Shows: `[OPPORTUNITY #N] BTCUSDT - Spread: X.XX% APY`
+
+### 6. Test Funding Rate APIs
+```bash
+cd /Users/israelbergenstein/Desktop/Strategies_System/HFT_Full_Pipeline
+make test_funding
+./build/test_funding_rates_simple
+```
+**Expected:**
+- ✅ Bybit: Fetches BTCUSDT funding rate
+- ✅ OKX: Fetches BTC-USDT-SWAP funding rate
+- ⚠️ Binance: May have parsing issues (known)
+
 ---
 
 ### FUNDING RATE MULTI-EXCHANGE MULTI-ASSET TESTS

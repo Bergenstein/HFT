@@ -1,0 +1,33 @@
+{
+  "integration": {
+    "strategies_repo_path": "../sabi-cppstrategies",
+    "strategies_link_name": "strategies",
+    "enabled": true
+  },
+  "paths": {
+    "system_includes": [
+      ".",
+      "arb",
+      "bt",
+      "core",
+      "pipeline",
+      "exchanges",
+      "md"
+    ],
+    "strategy_includes": [
+      "../sabi-cppstrategies/strats"
+    ]
+  },
+  "build": {
+    "compiler": "c++",
+    "standard": "c++20",
+    "flags": "-Wall -Wextra -O2 -pthread",
+    "output_dir": "build/integrated"
+  },
+  "testing": {
+    "default_runtime_seconds": 60,
+    "market_data_source": "multi_exchange_pipeline",
+    "backtesting_enabled": true,
+    "live_testing_enabled": true
+  }
+}
