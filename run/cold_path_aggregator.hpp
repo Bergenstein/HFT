@@ -7,10 +7,11 @@
 #include "../pipeline/mpmc_queue.hpp"
 #include "../pipeline/normalizer.hpp"
 #include "../core/cpu_affinity.hpp"
-#include "../arb/cross_exchange_arb.hpp"
-#include "../arb/perp_spot_arb.hpp"
-#include "../arb/funding_rate_arb.hpp"
-#include "../arb/market_neutral_pairs.hpp"
+// Arbitrage strategy includes moved to sabi-cppstrategies
+// #include "../arb/cross_exchange_arb.hpp"
+// #include "../arb/perp_spot_arb.hpp"
+// #include "../arb/funding_rate_arb.hpp"
+// #include "../arb/market_neutral_pairs.hpp"
 #include "../storage/sqlite/market_data_store.hpp"
 #include "../zmq/market_data_server.hpp"
 #include <thread>

@@ -121,6 +121,14 @@ TEST_FUNDING_SIMPLE_BIN  := $(BUILDDIR)/test_funding_rates_simple
 TEST_LATENCY_MAIN := tests/test_end_to_end_latency.cpp
 TEST_LATENCY_BIN  := $(BUILDDIR)/test_end_to_end_latency
 
+# GRVT Connection Test
+TEST_GRVT_MAIN := tests/test_grvt_connection.cpp
+TEST_GRVT_BIN  := $(BUILDDIR)/test_grvt_connection
+
+# Coinbase L2 Test
+TEST_COINBASE_L2_MAIN := tests/test_coinbase_l2.cpp
+TEST_COINBASE_L2_BIN  := $(BUILDDIR)/test_coinbase_l2
+
 #==============================================================================
 # BUILD RULES
 #==============================================================================
@@ -130,15 +138,18 @@ TEST_LATENCY_BIN  := $(BUILDDIR)/test_end_to_end_latency
 # Default: build all system components
 all: system
 
-# System components (no strategies)
+# System components (core system without strategies)
+# Note: Temporarily disabled due to strategy dependencies moved to sabi-cppstrategies:
+#   PRODUCTION_HFT_BIN, BACKTEST_SQLITE_BIN, BACKTEST_TO_JSON_BIN
 system: $(STREAM_BIN) $(STREAM_LAT_BIN) $(REPLAY_BIN) $(SCAN_BIN) \
-        $(MULTI_EXCHANGE_BIN) $(PRODUCTION_HFT_BIN) $(SYSTEM_API_SERVER_BIN) \
-        $(TEST_HOT_COLD_BIN) $(FULL_SYSTEM_BIN) \
-        $(DASHBOARD_SERVER_BIN) $(BACKTEST_SQLITE_BIN) $(BACKTEST_TO_JSON_BIN)
+        $(MULTI_EXCHANGE_BIN) $(SYSTEM_API_SERVER_BIN) \
+        $(TEST_HOT_COLD_BIN) $(FULL_SYSTEM_BIN) $(DASHBOARD_SERVER_BIN)
 
 # System tests
 tests: $(LOCKFREE_TEST_BIN) $(ZMQ_PUBSUB_BIN) $(MATCHING_SIMPLE_BIN) \
-       $(TEST_INTEGRATED_PIPELINE_BIN) $(TEST_FUNDING_SIMPLE_BIN) $(TEST_LATENCY_BIN)
+       $(TEST_INTEGRATED_PIPELINE_BIN) $(TEST_FUNDING_SIMPLE_BIN) $(TEST_LATENCY_BIN) \
+       $(TEST_GRVT_BIN) $(TEST_COINBASE_L2_BIN) \
+       $(TEST_GRVT_BIN) $(TEST_COINBASE_L2_BIN)
 
 # Generic compilation rules
 $(BUILDDIR)/%.o: %.cpp
@@ -244,6 +255,16 @@ $(TEST_FUNDING_SIMPLE_BIN): $(BUILDDIR)/tests/test_funding_rates_simple.o
 	@echo "✓ Built $@"
 
 $(TEST_LATENCY_BIN): $(BUILDDIR)/tests/test_end_to_end_latency.o
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
+	@echo "✓ Built $@"
+
+$(TEST_GRVT_BIN): $(BUILDDIR)/tests/test_grvt_connection.o
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
+	@echo "✓ Built $@"
+
+$(TEST_COINBASE_L2_BIN): $(BUILDDIR)/tests/test_coinbase_l2.o
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
 	@echo "✓ Built $@"

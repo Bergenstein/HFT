@@ -352,6 +352,12 @@ public:
         });
     }
     
+    void add_grvt(const std::vector<std::string>& symbols) {
+        std::cout << "[MULTI-EX] Adding GRVT with " << symbols.size() << " symbols\n";
+        // GRVT connector to be implemented when API is accessible
+        std::cout << "[MULTI-EX] GRVT integration pending - API endpoint confirmation needed\n";
+    }
+    
     void add_kraken(const std::vector<std::string>& symbols) {
         std::cout << "[MULTI-EX] Kraken DISABLED - websocketpp compatibility issue\n";
         std::cout << "[MULTI-EX] TODO: Fix websocketpp with Boost 1.86+\n";

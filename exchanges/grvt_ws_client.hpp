@@ -1,4 +1,4 @@
-// exchanges/coinbase_ws_client.hpp - REAL Coinbase WebSocket Client
+// exchanges/grvt_ws_client.hpp - GRVT WebSocket Client for L2 Order Book Data
 #pragma once
 
 #include <boost/beast/core.hpp>
@@ -22,144 +22,146 @@ using json = nlohmann::json;
 
 namespace exchanges {
 
-class CoinbaseWebSocketClient {
+class GRVTWebSocketClient {
 public:
     using MessageCallback = std::function<void(const json&)>;
     
-    CoinbaseWebSocketClient(net::io_context& ioc, ssl::context& ctx)
+    GRVTWebSocketClient(net::io_context& ioc, ssl::context& ctx)
         : resolver_(net::make_strand(ioc))
         , ws_(net::make_strand(ioc), ctx)
-        , host_("ws-feed.exchange.coinbase.com")
+        , host_("grvt.io")
         , port_("443")
     {}
     
-    void connect(const std::vector<std::string>& product_ids, MessageCallback callback) {
+    void connect(const std::vector<std::string>& symbols, MessageCallback callback) {
         callback_ = callback;
-        product_ids_ = product_ids;
+        symbols_ = symbols;
         
-        std::cout << "[Coinbase] Connecting to " << host_ << ":" << port_ << "\n";
+        std::cout << "[GRVT] Connecting to " << host_ << ":" << port_ << "\n";
         
         resolver_.async_resolve(
             host_, port_,
-            beast::bind_front_handler(&CoinbaseWebSocketClient::on_resolve, this));
+            beast::bind_front_handler(&GRVTWebSocketClient::on_resolve, this));
     }
     
     void close() {
         ws_.async_close(websocket::close_code::normal,
-            beast::bind_front_handler(&CoinbaseWebSocketClient::on_close, this));
+            beast::bind_front_handler(&GRVTWebSocketClient::on_close, this));
     }
 
 private:
     void on_resolve(beast::error_code ec, tcp::resolver::results_type results) {
         if (ec) {
-            std::cerr << "[Coinbase] Resolve failed: " << ec.message() << "\n";
+            std::cerr << "[GRVT] Resolve failed: " << ec.message() << "\n";
             return;
         }
         
         beast::get_lowest_layer(ws_).expires_after(std::chrono::seconds(30));
         beast::get_lowest_layer(ws_).async_connect(
             results,
-            beast::bind_front_handler(&CoinbaseWebSocketClient::on_connect, this));
+            beast::bind_front_handler(&GRVTWebSocketClient::on_connect, this));
     }
     
     void on_connect(beast::error_code ec, tcp::resolver::results_type::endpoint_type ep) {
         if (ec) {
-            std::cerr << "[Coinbase] Connect failed: " << ec.message() << "\n";
+            std::cerr << "[GRVT] Connect failed: " << ec.message() << "\n";
             return;
         }
         
-        std::cout << "[Coinbase] TCP connected to " << ep << "\n";
+        std::cout << "[GRVT] TCP connected to " << ep << "\n";
         
         beast::get_lowest_layer(ws_).expires_after(std::chrono::seconds(30));
         
         if (!SSL_set_tlsext_host_name(ws_.next_layer().native_handle(), host_.c_str())) {
             ec = beast::error_code(static_cast<int>(::ERR_get_error()), net::error::get_ssl_category());
-            std::cerr << "[Coinbase] SSL SNI failed: " << ec.message() << "\n";
+            std::cerr << "[GRVT] SSL SNI failed: " << ec.message() << "\n";
             return;
         }
         
         ws_.next_layer().async_handshake(
             ssl::stream_base::client,
-            beast::bind_front_handler(&CoinbaseWebSocketClient::on_ssl_handshake, this));
+            beast::bind_front_handler(&GRVTWebSocketClient::on_ssl_handshake, this));
     }
     
     void on_ssl_handshake(beast::error_code ec) {
         if (ec) {
-            std::cerr << "[Coinbase] SSL handshake failed: " << ec.message() << "\n";
+            std::cerr << "[GRVT] SSL handshake failed: " << ec.message() << "\n";
             return;
         }
         
-        std::cout << "[Coinbase] SSL handshake complete\n";
+        std::cout << "[GRVT] SSL handshake complete\n";
         
         beast::get_lowest_layer(ws_).expires_never();
         ws_.set_option(websocket::stream_base::timeout::suggested(beast::role_type::client));
         ws_.set_option(websocket::stream_base::decorator(
             [](websocket::request_type& req) {
                 req.set(http::field::user_agent, "HFT-System/1.0");
+                req.set(http::field::sec_websocket_protocol, "graphql-ws");
             }));
         
-        ws_.async_handshake(host_, "/",
-            beast::bind_front_handler(&CoinbaseWebSocketClient::on_handshake, this));
+        ws_.async_handshake(host_, "/graphql",
+            beast::bind_front_handler(&GRVTWebSocketClient::on_handshake, this));
     }
     
     void on_handshake(beast::error_code ec) {
         if (ec) {
-            std::cerr << "[Coinbase] WebSocket handshake failed: " << ec.message() << "\n";
+            std::cerr << "[GRVT] WebSocket handshake failed: " << ec.message() << "\n";
             return;
         }
         
-        std::cout << "[Coinbase] WebSocket connected\n";
+        std::cout << "[GRVT] WebSocket connected\n";
         
-        // Subscribe to level2_batch channel (includes snapshots)
-        json subscribe_msg = {
-            {"type", "subscribe"},
-            {"product_ids", product_ids_},
-            {"channels", {"level2_batch"}}
-        };
+        // Subscribe to L2 order book updates for all symbols
+        json sub_msg;
+        sub_msg["method"] = "subscribe";
+        sub_msg["params"]["channels"] = json::array();
         
-        std::string msg_str = subscribe_msg.dump();
-        std::cout << "[Coinbase] Subscribing: " << msg_str << "\n";
+        for (const auto& symbol : symbols_) {
+            sub_msg["params"]["channels"].push_back("orderbook." + symbol);
+        }
+        
+        std::string sub_str = sub_msg.dump();
+        std::cout << "[GRVT] Subscribing: " << sub_str << "\n";
         
         ws_.async_write(
-            net::buffer(msg_str),
-            beast::bind_front_handler(&CoinbaseWebSocketClient::on_write, this));
+            net::buffer(sub_str),
+            beast::bind_front_handler(&GRVTWebSocketClient::on_write, this));
     }
     
     void on_write(beast::error_code ec, std::size_t bytes_transferred) {
         boost::ignore_unused(bytes_transferred);
         
         if (ec) {
-            std::cerr << "[Coinbase] Write failed: " << ec.message() << "\n";
+            std::cerr << "[GRVT] Write failed: " << ec.message() << "\n";
             return;
         }
         
-        std::cout << "[Coinbase] Subscription sent, waiting for messages...\n";
         do_read();
     }
     
     void do_read() {
         ws_.async_read(
             buffer_,
-            beast::bind_front_handler(&CoinbaseWebSocketClient::on_read, this));
+            beast::bind_front_handler(&GRVTWebSocketClient::on_read, this));
     }
     
     void on_read(beast::error_code ec, std::size_t bytes_transferred) {
         boost::ignore_unused(bytes_transferred);
         
         if (ec) {
-            std::cerr << "[Coinbase] Read failed: " << ec.message() << "\n";
+            std::cerr << "[GRVT] Read failed: " << ec.message() << "\n";
             return;
         }
         
         try {
-            std::string msg = beast::buffers_to_string(buffer_.data());
-            json j = json::parse(msg);
+            std::string msg_str = beast::buffers_to_string(buffer_.data());
+            json msg = json::parse(msg_str);
             
             if (callback_) {
-                callback_(j);
+                callback_(msg);
             }
         } catch (const std::exception& e) {
-            std::cerr << "[Coinbase] JSON parse error: " << e.what() << "\n";
+            std::cerr << "[GRVT] Parse error: " << e.what() << "\n";
         }
         
         buffer_.consume(buffer_.size());
@@ -168,9 +170,10 @@ private:
     
     void on_close(beast::error_code ec) {
         if (ec) {
-            std::cerr << "[Coinbase] Close failed: " << ec.message() << "\n";
+            std::cerr << "[GRVT] Close failed: " << ec.message() << "\n";
+            return;
         }
-        std::cout << "[Coinbase] Connection closed\n";
+        std::cout << "[GRVT] Connection closed\n";
     }
     
     tcp::resolver resolver_;
@@ -178,7 +181,7 @@ private:
     beast::flat_buffer buffer_;
     std::string host_;
     std::string port_;
-    std::vector<std::string> product_ids_;
+    std::vector<std::string> symbols_;
     MessageCallback callback_;
 };
 

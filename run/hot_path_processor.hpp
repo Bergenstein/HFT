@@ -8,9 +8,10 @@
 #include "../pipeline/normalizer.hpp"
 #include "../core/cpu_affinity.hpp"
 #include "../core/order_book.hpp"
-#include "../strats/imbalance_taker.hpp"
-#include "../strats/strategy_ofi.hpp"
-#include "../strats/microprice_strategy.hpp"
+// Strategy includes moved to sabi-cppstrategies
+// #include "../strats/imbalance_taker.hpp"
+// #include "../strats/strategy_ofi.hpp"
+// #include "../strats/microprice_strategy.hpp"
 #include "../zmq/market_data_server.hpp"
 #include <thread>
 #include <atomic>

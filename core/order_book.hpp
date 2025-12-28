@@ -4,9 +4,37 @@
 #include <utility>
 #include <limits>
 #include <optional>
+#include <vector>
 #include <nlohmann/json.hpp>
 
 namespace core {
+
+// Price level structure for order book updates
+struct PriceLevel {
+    double price;
+    double quantity;
+};
+
+// Order book update structure
+struct OrderBookUpdate {
+    std::string symbol;
+    std::string exchange;
+    uint64_t timestamp_us;
+    bool is_snapshot;
+    std::vector<PriceLevel> bids;
+    std::vector<PriceLevel> asks;
+};
+
+// Trade structure
+struct Trade {
+    std::string symbol;
+    std::string exchange;
+    double price;
+    double quantity;
+    bool is_buyer_maker;
+    uint64_t timestamp_us;
+};
+
 struct OrderBook {
     using Price = double;
     using Qty   = double;
