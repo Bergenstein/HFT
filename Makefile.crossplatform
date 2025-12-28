@@ -1,0 +1,200 @@
+# HFT Full Pipeline - Cross-Platform Makefile (Linux + macOS)
+# Automatically detects OS and sets appropriate paths
+
+SHELL := /bin/bash
+CXX       ?= c++
+CXXFLAGS  := -std=c++20 -Wall -Wextra -O2 -pthread
+
+#==============================================================================
+# OS DETECTION
+#==============================================================================
+
+UNAME_S := $(shell uname -s)
+
+ifeq ($(UNAME_S),Darwin)
+    # macOS - Use Homebrew paths
+    OPENSSL_PREFIX := $(shell brew --prefix openssl@3 2>/dev/null || echo /opt/homebrew/opt/openssl@3)
+    BOOST_PREFIX   := $(shell brew --prefix boost 2>/dev/null || echo /opt/homebrew/opt/boost)
+    JSON_PREFIX    := $(shell brew --prefix nlohmann-json 2>/dev/null || echo /opt/homebrew/opt/nlohmann-json)
+    SIMDJSON_PREFIX := $(shell brew --prefix simdjson 2>/dev/null || echo /opt/homebrew/opt/simdjson)
+    ZMQ_PREFIX     := $(shell brew --prefix zeromq 2>/dev/null || echo /opt/homebrew/opt/zeromq)
+    CPPZMQ_PREFIX  := $(shell brew --prefix cppzmq 2>/dev/null || echo /opt/homebrew/opt/cppzmq)
+    PROTOBUF_PREFIX := $(shell brew --prefix protobuf 2>/dev/null || echo /opt/homebrew/opt/protobuf)
+    ABSEIL_PREFIX  := $(shell brew --prefix abseil 2>/dev/null || echo /opt/homebrew/opt/abseil)
+    WEBSOCKETPP_PREFIX := $(shell brew --prefix websocketpp 2>/dev/null || echo /opt/homebrew/opt/websocketpp)
+else
+    # Linux - Use standard system paths
+    OPENSSL_PREFIX := /usr
+    BOOST_PREFIX   := /usr
+    JSON_PREFIX    := /usr
+    SIMDJSON_PREFIX := /usr
+    ZMQ_PREFIX     := /usr
+    CPPZMQ_PREFIX  := /usr
+    PROTOBUF_PREFIX := /usr
+    ABSEIL_PREFIX  := /usr
+    WEBSOCKETPP_PREFIX := /usr
+endif
+
+#==============================================================================
+# INCLUDE AND LIBRARY PATHS
+#==============================================================================
+
+INCLUDES := -I. -I$(BOOST_PREFIX)/include -I$(OPENSSL_PREFIX)/include -I$(JSON_PREFIX)/include \
+            -I$(SIMDJSON_PREFIX)/include -I$(ZMQ_PREFIX)/include -I$(CPPZMQ_PREFIX)/include \
+            -I$(PROTOBUF_PREFIX)/include -I$(ABSEIL_PREFIX)/include -I$(WEBSOCKETPP_PREFIX)/include
+
+# Abseil libraries (required by protobuf)
+ABSEIL_LIBS := -labsl_log_internal_check_op -labsl_log_internal_conditions \
+               -labsl_log_internal_format -labsl_log_internal_globals \
+               -labsl_log_internal_log_sink_set -labsl_log_internal_message \
+               -labsl_log_severity -labsl_log_entry -labsl_log_globals \
+               -labsl_hash -labsl_city -labsl_raw_hash_set -labsl_hashtablez_sampler \
+               -labsl_exponential_biased \
+               -labsl_strings -labsl_strings_internal -labsl_str_format_internal \
+               -labsl_cord -labsl_cordz_info -labsl_cord_internal \
+               -labsl_cordz_functions -labsl_cordz_handle \
+               -labsl_crc_cord_state -labsl_crc32c -labsl_crc_internal -labsl_crc_cpu_detect \
+               -labsl_synchronization -labsl_graphcycles_internal -labsl_kernel_timeout_internal \
+               -labsl_time -labsl_civil_time -labsl_time_zone \
+               -labsl_malloc_internal -labsl_base -labsl_spinlock_wait \
+               -labsl_int128 -labsl_throw_delegate -labsl_stacktrace -labsl_symbolize \
+               -labsl_debugging_internal -labsl_demangle_internal -labsl_raw_logging_internal
+
+LIBS     := -L$(OPENSSL_PREFIX)/lib -L$(ZMQ_PREFIX)/lib -L$(PROTOBUF_PREFIX)/lib -L$(ABSEIL_PREFIX)/lib \
+            -L$(SIMDJSON_PREFIX)/lib -lssl -lcrypto -lpthread -lzmq -lprotobuf -lsimdjson -lcurl $(ABSEIL_LIBS)
+
+BUILDDIR := build
+SRCDIRS  := discovery md net io core
+
+COMMON_SRCS := $(foreach d,$(SRCDIRS),$(wildcard $(d)/*.cpp))
+COMMON_OBJS := $(patsubst %.cpp,$(BUILDDIR)/%.o,$(COMMON_SRCS))
+
+#==============================================================================
+# SYSTEM BINARIES
+#==============================================================================
+
+# Core system tests
+TEST_LOCKFREE_BIN := $(BUILDDIR)/test_lockfree_queues
+TEST_ZMQ_BIN := $(BUILDDIR)/test_zmq_pubsub
+TEST_MATCHING_BIN := $(BUILDDIR)/test_matching_engine_simple
+TEST_PIPELINE_BIN := $(BUILDDIR)/test_system_pipeline
+TEST_FUNDING_BIN := $(BUILDDIR)/test_funding_rates_simple
+TEST_LATENCY_BIN := $(BUILDDIR)/test_end_to_end_latency
+
+# Exchange integration tests
+TEST_GRVT_BIN := $(BUILDDIR)/test_grvt_connection
+TEST_COINBASE_L2_BIN := $(BUILDDIR)/test_coinbase_l2
+
+# System API server
+SYSTEM_API_SERVER_BIN := $(BUILDDIR)/system_api_server
+
+#==============================================================================
+# PHONY TARGETS
+#==============================================================================
+
+.PHONY: all clean tests system_tests exchange_tests help
+
+all: system_tests exchange_tests $(SYSTEM_API_SERVER_BIN)
+
+tests: system_tests exchange_tests
+
+system_tests: $(TEST_LOCKFREE_BIN) $(TEST_ZMQ_BIN) $(TEST_MATCHING_BIN) \
+              $(TEST_PIPELINE_BIN) $(TEST_FUNDING_BIN) $(TEST_LATENCY_BIN)
+
+exchange_tests: $(TEST_GRVT_BIN) $(TEST_COINBASE_L2_BIN)
+
+#==============================================================================
+# BUILD RULES
+#==============================================================================
+
+# Object file compilation
+$(BUILDDIR)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+# Protobuf compilation
+$(BUILDDIR)/proto/messages.pb.o: proto/messages.pb.cc
+	@mkdir -p $(BUILDDIR)/proto
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+# Test binaries
+$(TEST_LOCKFREE_BIN): run/test_lockfree_queues.cpp
+	@mkdir -p $(BUILDDIR)/run
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $(BUILDDIR)/run/test_lockfree_queues.o
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(BUILDDIR)/run/test_lockfree_queues.o $(LIBS)
+	@echo "✓ Built $@"
+
+$(TEST_ZMQ_BIN): run/test_zmq_pubsub.cpp $(BUILDDIR)/proto/messages.pb.o
+	@mkdir -p $(BUILDDIR)/run
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $(BUILDDIR)/run/test_zmq_pubsub.o
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(BUILDDIR)/run/test_zmq_pubsub.o $(BUILDDIR)/proto/messages.pb.o $(LIBS)
+	@echo "✓ Built $@"
+
+$(TEST_MATCHING_BIN): run/test_matching_engine_simple.cpp
+	@mkdir -p $(BUILDDIR)/run
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $(BUILDDIR)/run/test_matching_engine_simple.o
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(BUILDDIR)/run/test_matching_engine_simple.o $(LIBS)
+	@echo "✓ Built $@"
+
+$(TEST_PIPELINE_BIN): tests/test_system_pipeline.cpp
+	@mkdir -p $(BUILDDIR)/tests
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $(BUILDDIR)/tests/test_system_pipeline.o
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(BUILDDIR)/tests/test_system_pipeline.o $(LIBS) -lsqlite3
+	@echo "✓ Built $@"
+
+$(TEST_FUNDING_BIN): tests/test_funding_rates_simple.cpp
+	@mkdir -p $(BUILDDIR)/tests
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $(BUILDDIR)/tests/test_funding_rates_simple.o
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(BUILDDIR)/tests/test_funding_rates_simple.o $(LIBS) -lsqlite3
+	@echo "✓ Built $@"
+
+$(TEST_LATENCY_BIN): tests/test_end_to_end_latency.cpp
+	@mkdir -p $(BUILDDIR)/tests
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $(BUILDDIR)/tests/test_end_to_end_latency.o
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(BUILDDIR)/tests/test_end_to_end_latency.o $(LIBS)
+	@echo "✓ Built $@"
+
+$(TEST_GRVT_BIN): tests/test_grvt_connection.cpp
+	@mkdir -p $(BUILDDIR)/tests
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $(BUILDDIR)/tests/test_grvt_connection.o
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(BUILDDIR)/tests/test_grvt_connection.o $(LIBS)
+	@echo "✓ Built $@"
+
+$(TEST_COINBASE_L2_BIN): tests/test_coinbase_l2.cpp
+	@mkdir -p $(BUILDDIR)/tests
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $(BUILDDIR)/tests/test_coinbase_l2.o
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(BUILDDIR)/tests/test_coinbase_l2.o $(LIBS)
+	@echo "✓ Built $@"
+
+$(SYSTEM_API_SERVER_BIN): run/system_api_server.cpp $(BUILDDIR)/proto/messages.pb.o
+	@mkdir -p $(BUILDDIR)/run
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $(BUILDDIR)/run/system_api_server.o
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(BUILDDIR)/run/system_api_server.o $(BUILDDIR)/proto/messages.pb.o $(LIBS)
+	@echo "✓ Built $@"
+
+#==============================================================================
+# UTILITY TARGETS
+#==============================================================================
+
+clean:
+	rm -rf $(BUILDDIR)
+	@echo "✓ Cleaned build directory"
+
+help:
+	@echo "Cross-Platform HFT System Makefile"
+	@echo "Detected OS: $(UNAME_S)"
+	@echo ""
+	@echo "Targets:"
+	@echo "  all             - Build all system components"
+	@echo "  tests           - Build all tests"
+	@echo "  system_tests    - Build core system tests"
+	@echo "  exchange_tests  - Build exchange integration tests"
+	@echo "  clean           - Remove build artifacts"
+	@echo "  help            - Show this help"
+	@echo ""
+	@echo "System paths:"
+	@echo "  OPENSSL:     $(OPENSSL_PREFIX)"
+	@echo "  BOOST:       $(BOOST_PREFIX)"
+	@echo "  SIMDJSON:    $(SIMDJSON_PREFIX)"
+	@echo "  ZMQ:         $(ZMQ_PREFIX)"
+	@echo "  PROTOBUF:    $(PROTOBUF_PREFIX)"
