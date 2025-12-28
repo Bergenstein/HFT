@@ -43,22 +43,29 @@ INCLUDES := -I. -I$(BOOST_PREFIX)/include -I$(OPENSSL_PREFIX)/include -I$(JSON_P
             -I$(SIMDJSON_PREFIX)/include -I$(ZMQ_PREFIX)/include -I$(CPPZMQ_PREFIX)/include \
             -I$(PROTOBUF_PREFIX)/include -I$(ABSEIL_PREFIX)/include -I$(WEBSOCKETPP_PREFIX)/include
 
-# Abseil libraries (required by protobuf)
-ABSEIL_LIBS := -labsl_log_internal_check_op -labsl_log_internal_conditions \
-               -labsl_log_internal_format -labsl_log_internal_globals \
-               -labsl_log_internal_log_sink_set -labsl_log_internal_message \
-               -labsl_log_severity -labsl_log_entry -labsl_log_globals \
-               -labsl_hash -labsl_city -labsl_raw_hash_set -labsl_hashtablez_sampler \
-               -labsl_exponential_biased \
-               -labsl_strings -labsl_strings_internal -labsl_str_format_internal \
-               -labsl_cord -labsl_cordz_info -labsl_cord_internal \
-               -labsl_cordz_functions -labsl_cordz_handle \
-               -labsl_crc_cord_state -labsl_crc32c -labsl_crc_internal -labsl_crc_cpu_detect \
-               -labsl_synchronization -labsl_graphcycles_internal -labsl_kernel_timeout_internal \
-               -labsl_time -labsl_civil_time -labsl_time_zone \
-               -labsl_malloc_internal -labsl_base -labsl_spinlock_wait \
-               -labsl_int128 -labsl_throw_delegate -labsl_stacktrace -labsl_symbolize \
-               -labsl_debugging_internal -labsl_demangle_internal -labsl_raw_logging_internal
+# Abseil libraries (OS-specific - macOS has more granular libs, Linux has fewer)
+ifeq ($(UNAME_S),Darwin)
+    # macOS - Full Abseil library set from Homebrew
+    ABSEIL_LIBS := -labsl_log_internal_check_op -labsl_log_internal_conditions \
+                   -labsl_log_internal_format -labsl_log_internal_globals \
+                   -labsl_log_internal_log_sink_set -labsl_log_internal_message \
+                   -labsl_log_severity -labsl_log_entry -labsl_log_globals \
+                   -labsl_hash -labsl_city -labsl_raw_hash_set -labsl_hashtablez_sampler \
+                   -labsl_exponential_biased \
+                   -labsl_strings -labsl_strings_internal -labsl_str_format_internal \
+                   -labsl_cord -labsl_cordz_info -labsl_cord_internal \
+                   -labsl_cordz_functions -labsl_cordz_handle \
+                   -labsl_crc_cord_state -labsl_crc32c -labsl_crc_internal -labsl_crc_cpu_detect \
+                   -labsl_synchronization -labsl_graphcycles_internal -labsl_kernel_timeout_internal \
+                   -labsl_time -labsl_civil_time -labsl_time_zone \
+                   -labsl_malloc_internal -labsl_base -labsl_spinlock_wait \
+                   -labsl_int128 -labsl_throw_delegate -labsl_stacktrace -labsl_symbolize \
+                   -labsl_debugging_internal -labsl_demangle_internal -labsl_raw_logging_internal
+else
+    # Linux - Minimal Abseil libraries (most distros package fewer libs)
+    ABSEIL_LIBS := -labsl_base -labsl_strings -labsl_synchronization -labsl_time \
+                   -labsl_hash -labsl_cord -labsl_int128 -labsl_raw_hash_set
+endif
 
 LIBS     := -L$(OPENSSL_PREFIX)/lib -L$(ZMQ_PREFIX)/lib -L$(PROTOBUF_PREFIX)/lib -L$(ABSEIL_PREFIX)/lib \
             -L$(SIMDJSON_PREFIX)/lib -lssl -lcrypto -lpthread -lzmq -lprotobuf -lsimdjson -lcurl $(ABSEIL_LIBS)
