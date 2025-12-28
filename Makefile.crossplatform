@@ -99,7 +99,7 @@ SYSTEM_API_SERVER_BIN := $(BUILDDIR)/system_api_server
 # PHONY TARGETS
 #==============================================================================
 
-.PHONY: all clean tests system_tests exchange_tests help
+.PHONY: all clean tests system_tests exchange_tests help proto
 
 all: system_tests exchange_tests $(SYSTEM_API_SERVER_BIN)
 
@@ -111,6 +111,21 @@ system_tests: $(TEST_LOCKFREE_BIN) $(TEST_ZMQ_BIN) $(TEST_MATCHING_BIN) \
 exchange_tests: $(TEST_GRVT_BIN) $(TEST_COINBASE_L2_BIN)
 
 #==============================================================================
+# PROTOBUF GENERATION
+#==============================================================================
+
+# Generate C++ files from .proto
+proto:
+	@echo "Regenerating protobuf files..."
+	protoc --cpp_out=. proto/messages.proto
+	@echo "✓ Protobuf files generated"
+
+# Ensure proto files exist before building
+proto/messages.pb.cc proto/messages.pb.h: proto/messages.proto
+	@echo "Generating protobuf files (if needed)..."
+	protoc --cpp_out=. proto/messages.proto
+
+#==============================================================================
 # BUILD RULES
 #==============================================================================
 
@@ -119,8 +134,8 @@ $(BUILDDIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-# Protobuf compilation
-$(BUILDDIR)/proto/messages.pb.o: proto/messages.pb.cc
+# Protobuf compilation (depends on generated files)
+$(BUILDDIR)/proto/messages.pb.o: proto/messages.pb.cc proto/messages.pb.h
 	@mkdir -p $(BUILDDIR)/proto
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 

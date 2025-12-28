@@ -131,7 +131,6 @@ package hft;
 //   Prices: ~2 decimals ($50,000.50)
 message PriceLevel {
     double price = 1;  // Price level (e.g., 50000.50)
-    double price = 1;  // Price level (e.g., 50000.50)
     double size = 2;   // Quantity available at this price (e.g., 1.5 BTC)
 }
 
